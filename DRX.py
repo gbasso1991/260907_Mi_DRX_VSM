@@ -52,51 +52,47 @@ def pvoigt_fondo(x, A, xc, fwhm, eta, b0, b1):
     return b0 + b1*(x-xc) + A*perfil
 
 #%% analizar_pico
-def analizar_pico(x, y, centro_ref, ventana=0.9, picos_detectados=None):
+def analizar_pico(x, y, centro_ref, ventana=0.9, picos_detectados=None,
+                  correcion_LaB6=False, df_LaB6=None,
+                  K=0.9, lambda_X=1.5406, D_LaB6=800):
     """
-    Ajusta un pico de difracción mediante una pseudo-Voigt
-    sobre un fondo lineal.
+    Ajusta un pico mediante una pseudo-Voigt sobre fondo lineal y,
+    opcionalmente, estima el FWHM corregido por ensanchamiento instrumental.
 
-    Si se proporcionan picos_detectados, utiliza el máximo detectado
-    más cercano a centro_ref como estimación inicial del centro y
-    de la amplitud. Si no encuentra ninguno dentro de los límites
-    permitidos para el centro, utiliza la inicialización original.
-
-    Parámetros
-    ----------
-    x : array_like
-        Posiciones angulares 2theta, en grados.
-    y : array_like
-        Intensidades medidas correspondientes a x.
-    centro_ref : float
-        Posición angular aproximada del pico, en grados de 2theta.
-    ventana : float, opcional
-        Semianchura de la región de ajuste, en grados.
-        Por defecto, 0.9 grados.
-    picos_detectados : iterable o None, opcional
-        Iterable de tuplas (índice, posición angular, intensidad),
-        como el obtenido con find_peaks. Si es None, se utiliza
-        la inicialización original.
+    Parámetros adicionales
+    ----------------------
+    correcion_LaB6 : bool
+        Si True, estima y aplica la corrección instrumental a partir de LaB6.
+    df_LaB6 : DataFrame
+        Tabla de calibración LaB6, con columnas:
+        '2theta Ka1 (°)', 'FWHM Ka1 (°)' y 'eta'.
+    K : float
+        Factor de Scherrer.
+    lambda_X : float
+        Longitud de onda en Å.
+    D_LaB6 : float
+        Tamaño de dominio de referencia de LaB6, en nm.
 
     Retorna
     -------
     xp : ndarray
-        Posiciones angulares utilizadas en el ajuste.
+        Posiciones angulares usadas en el ajuste.
     popt : ndarray
-        Parámetros ajustados: [A, xc, fwhm, eta, b0, b1].
+        Parámetros ajustados [A, xc, fwhm, eta, b0, b1].
     pcov : ndarray
-        Matriz de covarianza estimada de los parámetros ajustados.
+        Matriz de covarianza del ajuste.
+    fwhm_corregido : float
+        FWHM corregido en grados de 2theta. Si no se activa la
+        corrección, coincide con el FWHM ajustado.
     """
     mask = (x >= centro_ref-ventana) & (x <= centro_ref+ventana)
     xp, yp = x[mask], y[mask]
     if len(xp) < 10:
         raise ValueError('Pocos puntos para ajustar el pico')
 
-    # Estimaciones iniciales del fondo y del ancho
     b0 = np.percentile(yp, 10)
     fwhm0 = max(3*np.median(np.diff(xp)), 0.15)
 
-    # Inicialización del centro y la amplitud
     candidatos = []
     if picos_detectados is not None:
         candidatos = [
@@ -124,7 +120,251 @@ def analizar_pico(x, y, centro_ref, ventana=0.9, picos_detectados=None):
         ),
         maxfev=30000
     )
-    return xp, popt, pcov
+
+    fwhm = popt[2]
+    fwhm_corregido = fwhm
+
+    if correcion_LaB6:
+        if df_LaB6 is None:
+            raise ValueError('Debes pasar df_LaB6 para corregir el ancho')
+
+        # Anchos e intensidades de mezcla de la muestra
+        eta_muestra = np.clip(popt[3], 0, 1)
+        theta = np.deg2rad(popt[1]/2)
+
+        # Interpolación de la calibración en la posición del pico
+        df_cal = df_LaB6.sort_values('2theta Ka1 (°)')
+        x_cal = df_cal['2theta Ka1 (°)'].to_numpy()
+        beta_cal = df_cal['FWHM Ka1 (°)'].to_numpy()
+        eta_cal = df_cal['eta'].to_numpy()
+
+        if not x_cal.min() <= popt[1] <= x_cal.max():
+            raise ValueError(
+                'El pico está fuera del intervalo angular calibrado por LaB6'
+            )
+
+        beta_inst_obs = np.interp(popt[1], x_cal, beta_cal)
+        eta_inst = np.clip(np.interp(popt[1], x_cal, eta_cal), 0, 1)
+
+        # Ensanchamiento intrínseco aproximado de LaB6:
+        # beta_size = K*lambda/(D*cos(theta)), en radianes de 2theta.
+        beta_LaB6_intr = np.rad2deg(
+            K*(lambda_X/(D_LaB6*10))*1/np.cos(theta)
+        )
+
+        # Descomposición heurística de los FWHM pseudo-Voigt.
+        # No es una descomposición exacta de la función instrumental.
+        beta_G_inst = beta_inst_obs*np.sqrt(1-eta_inst)
+        beta_L_inst_obs = beta_inst_obs*eta_inst
+        beta_L_inst = max(beta_L_inst_obs-beta_LaB6_intr, 0)
+
+        beta_G_muestra = fwhm*np.sqrt(1-eta_muestra)
+        beta_L_muestra = fwhm*eta_muestra
+
+        # Deconvolución aproximada: gaussiana en cuadratura,
+        # lorentziana por resta lineal.
+        beta_G_corr = np.sqrt(max(beta_G_muestra**2-beta_G_inst**2, 0))
+        beta_L_corr = max(beta_L_muestra-beta_L_inst, 0)
+
+        # FWHM equivalente de Voigt (aproximación de Thompson-Cox-Hastings)
+        fwhm_corregido = (
+            0.5346*beta_L_corr
+            + np.sqrt(0.2166*beta_L_corr**2 + beta_G_corr**2)
+        )
+
+    return xp, popt, pcov, fwhm_corregido
+#%% promedio_cristalita
+def promedio_cristalita(tabla, columna_D, columna_err):
+    datos = tabla[[columna_D, columna_err]].dropna()
+    datos = datos[
+        np.isfinite(datos[columna_D]) &
+        np.isfinite(datos[columna_err]) &
+        (datos[columna_err] > 0) &
+        (datos[columna_D] > 0)
+    ]
+
+    D = datos[columna_D].to_numpy()
+    err = datos[columna_err].to_numpy()
+
+    if len(D) < 2:
+        raise ValueError('Se necesitan al menos dos reflexiones válidas')
+
+    pesos = 1/err**2
+    D_media = np.sum(pesos*D)/np.sum(pesos)
+    err_media = np.sqrt(1/np.sum(pesos))
+
+    chi2_red = np.sum(((D-D_media)/err)**2)/(len(D)-1)
+
+    # Inflar la incertidumbre si la dispersión supera la esperada
+    err_final = err_media*np.sqrt(max(chi2_red, 1))
+
+    return {
+        'D medio (nm)': D_media,
+        'Incertidumbre (nm)': err_final,
+        'Desviación estándar (nm)': np.std(D, ddof=1),
+        'chi2 reducido': chi2_red,
+        'N reflexiones': len(D)}
+
+#%% Función general de análisis DRX por muestra
+
+def analizar_muestra(nombre, dostheta, intensity, picos_detectados):
+    picos = picos_detectados
+    # A partir de acá, mantené el tratamiento de ajuste,
+    # cálculo de Scherrer, tabla y gráficos de la función anterior.
+    
+    # Ajuste individual de las reflexiones
+    resultados = []
+    fig, ax = plt.subplots(figsize=(10,5), constrained_layout=True)
+    ax.plot(dostheta, intensity, '-', color='0.4', lw=0.9, label=nombre)
+
+    for hkl, centro_ref in reflexiones.items():
+        if not any(abs(theta-centro_ref) <= 0.9/2
+               for _, theta, intens in picos_detectados):
+            continue
+        try:
+            # Ajuste sin corrección instrumental
+            xp, popt, pcov, fwhm_sin = analizar_pico(
+                dostheta, intensity, centro_ref,
+                picos_detectados=picos,
+                correcion_LaB6=False
+            )
+            A, xc, fwhm_deg, eta, b0, b1 = popt
+
+            # Corrección instrumental LaB6
+            _, popt_corr, pcov_corr, fwhm_con = analizar_pico(
+                dostheta, intensity, centro_ref,
+                picos_detectados=picos,
+                correcion_LaB6=True,
+                df_LaB6=df_LaB6
+            )
+
+            theta_rad = np.deg2rad(xc/2)
+            beta_sin = np.deg2rad(fwhm_sin)
+            beta_con = np.deg2rad(fwhm_con)
+
+            D_sin = K*lambda_X/(beta_sin*np.cos(theta_rad))/10
+            D_con = K*lambda_X/(beta_con*np.cos(theta_rad))/10 if beta_con > 0 else np.nan
+
+            # Incertidumbres aproximadas del ajuste
+            fwhm_err_deg = np.sqrt(max(pcov[2,2], 0))
+            beta_err = np.deg2rad(fwhm_err_deg)
+            D_err_sin = D_sin*beta_err/beta_sin
+
+            fwhm_err_corr_deg = np.sqrt(max(pcov_corr[2,2], 0))
+            beta_err_corr = np.deg2rad(fwhm_err_corr_deg)
+            D_err_con = D_con*beta_err_corr/beta_con if beta_con > 0 else np.nan
+
+            resultados.append({
+                'Reflexión': hkl,
+                '2theta teo (°)': centro_ref,
+                '2theta (°)': xc,
+                'FWHM sin (°)': fwhm_sin,
+                'FWHM con (°)': fwhm_con,
+                'eta': eta,
+                'D sin (nm)': D_sin,
+                'Error sin (nm)': D_err_sin,
+                'D con (nm)': D_con,
+                'Error con (nm)': D_err_con
+            })
+
+            xfit = np.linspace(xp.min(), xp.max(), 300)
+            ax.plot(xfit, pvoigt_fondo(xfit, *popt), lw=1.2,
+                    label=f'{hkl}: {xc:.2f}°')
+
+        except (ValueError, RuntimeError) as e:
+            print(f'{hkl}: no se pudo ajustar ({e})')
+
+    ax.set_xlim(20,80)
+    ax.set_ylim(0,None)
+    ax.set_xlabel(r'$2\theta$ (°)')
+    ax.set_ylabel('Intensidad (u.a.)')
+    ax.set_title(f'{nombre}: ajuste pseudo-Voigt en reflexiones de magnetita')
+    ax.grid()
+    ax.legend(ncol=1, fontsize=8)
+    plt.show()
+
+    tabla = pd.DataFrame(resultados)
+    if tabla.empty:
+        raise ValueError(f'{nombre}: no se pudo ajustar ninguna reflexión')
+
+    display(tabla.round(5))
+
+    # Resumen estadístico
+    resumen_sin = promedio_cristalita(tabla, 'D sin (nm)', 'Error sin (nm)')
+    resumen_con = promedio_cristalita(tabla, 'D con (nm)', 'Error con (nm)')
+
+    print(
+        f"{nombre} sin corrección: D = {resumen_sin['D medio (nm)']:.1f} "
+        f"± {resumen_sin['Incertidumbre (nm)']:.1f} nm; "
+        f"desviación estándar = {resumen_sin['Desviación estándar (nm)']:.1f} nm; "
+        f"χ² reducido = {resumen_sin['chi2 reducido']:.1f}; "
+        f"N = {resumen_sin['N reflexiones']}"
+    )
+    print(
+        f"{nombre} con corrección: D = {resumen_con['D medio (nm)']:.1f} "
+        f"± {resumen_con['Incertidumbre (nm)']:.1f} nm; "
+        f"desviación estándar = {resumen_con['Desviación estándar (nm)']:.1f} nm; "
+        f"χ² reducido = {resumen_con['chi2 reducido']:.1f}; "
+        f"N = {resumen_con['N reflexiones']}"
+    )
+
+    # Comparación de D frente a 2theta
+    fig2, ax = plt.subplots(figsize=(9,5), constrained_layout=True)
+
+    x = tabla['2theta (°)'].to_numpy()
+    D_sin = tabla['D sin (nm)'].to_numpy()
+    err_sin = tabla['Error sin (nm)'].to_numpy()
+    D_con = tabla['D con (nm)'].to_numpy()
+    err_con = tabla['Error con (nm)'].to_numpy()
+
+    orden = np.argsort(x)
+    x, D_sin, err_sin, D_con, err_con = (
+        v[orden] for v in (x, D_sin, err_sin, D_con, err_con)
+    )
+
+    ax.errorbar(x, D_sin, yerr=err_sin, fmt='o-', capsize=3,
+                lw=1.2, ms=5, label='Sin corrección instrumental')
+    ax.errorbar(x, D_con, yerr=err_con, fmt='s--', capsize=3,
+                lw=1.2, ms=5, label='Con corrección LaB$_6$')
+
+    ax.axhspan(
+        resumen_sin['D medio (nm)'] - resumen_sin['Desviación estándar (nm)'],
+        resumen_sin['D medio (nm)'] + resumen_sin['Desviación estándar (nm)'],
+        color='C0', alpha=0.10
+    )
+    ax.axhline(
+        resumen_sin['D medio (nm)'], color='C0', ls=':', lw=1.5,
+        label=f"Media sin corrección: {resumen_sin['D medio (nm)']:.1f} ± {resumen_sin['Desviación estándar (nm)']:.1f} nm"
+    )
+
+    ax.axhspan(
+        resumen_con['D medio (nm)'] - resumen_con['Desviación estándar (nm)'],
+        resumen_con['D medio (nm)'] + resumen_con['Desviación estándar (nm)'],
+        color='C1', alpha=0.10
+    )
+    ax.axhline(
+        resumen_con['D medio (nm)'], color='C1', ls=':', lw=1.5,
+        label=f"Media con corrección: {resumen_con['D medio (nm)']:.1f} ± {resumen_con['Desviación estándar (nm)']:.1f} nm"
+    )
+
+    for _, fila in tabla.iterrows():
+        ax.annotate(
+            fila['Reflexión'],
+            (fila['2theta (°)'], fila['D sin (nm)']),
+            xytext=(0,-15), textcoords='offset points',
+            ha='center', fontsize=8
+        )
+
+    ax.set_xlabel(r'$2\theta$ (°)')
+    ax.set_ylabel('Tamaño de cristalita, $D$ (nm)')
+    ax.set_title(f'{nombre}: comparación de tamaños de cristalita por Scherrer')
+    ax.set_xlim(28,82)
+    ax.set_ylim(0,)
+    ax.grid(alpha=0.3)
+    ax.legend(fontsize=8)
+    plt.show()
+
+    return tabla, resumen_sin, resumen_con, picos, fig,fig2
 #%% Parámetros para Análisis de Scherrer: pseudo-Voigt + fondo lineal
 K = 0.9
 lambda_X = 1.5406  # Å, Cu Kα
@@ -157,17 +397,15 @@ ax.set_ylabel('Intensidad (u.a.)')
 ax.set_title('Patrón de calibración LaB$_6$')
 ax.grid()
 ax.legend()
+ax.set_xlabel('2θ (°)')
 plt.show()
 
 
-#%% Detección de picos del patrón LaB6
+#% Detección de picos del patrón LaB6
 prominencia_LaB6 = 0.01*np.ptp(intensity_LaB6)
 peaks_LaB6, props_LaB6 = find_peaks(
-    intensity_LaB6,
-    prominence=prominencia_LaB6,
-    width=2,
-    distance=5
-)
+    intensity_LaB6,prominence=prominencia_LaB6,
+    width=2,    distance=5)
 
 picos_LaB6 = list(zip(peaks_LaB6,dostheta_LaB6[peaks_LaB6],intensity_LaB6[peaks_LaB6]))
 
@@ -181,6 +419,7 @@ ax.set_ylabel('Intensidad (u.a.)')
 ax.set_title('Detección de máximos del patrón LaB$_6$')
 ax.grid()
 ax.legend()
+ax.set_xlabel('2θ (°)')
 plt.show()
 
 print(f'LaB6: {len(peaks_LaB6)} picos detectados\n')
@@ -189,243 +428,186 @@ for i, theta, intens in picos_LaB6:
     print(f'{i:4} | {theta:7.2f} | {intens:10.0f}')
 
 
-#%% Parámetro de red del LaB6 a partir de las posiciones de los picos
-lambda_Ka1 = 1.5406  # Å
-a_ref_LaB6 = 4.156826  # Å; valor certificado de referencia
+#%% Ajuste de dobletes LaB6: pseudo-Voigt + fondo lineal
+lambda_Ka1 = 1.5406
+lambda_Ka2 = 1.5444
+rel_int_Ka2 = 0.5
+a_ref_LaB6 = 4.156826  # Å, NIST SRM 660c; usar solo si corresponde al patrón
 
-# Reflexiones cúbicas de LaB6: (hkl) y h²+k²+l²
-reflexiones_LaB6 = {
-    '(100)': (1, 21.34),
-    '(110)': (2, 30.38),
-    '(111)': (3, 37.42),
-    '(200)': (4, 43.50),
-    '(210)': (5, 48.94),
-    '(211)': (6, 53.96),
-    '(220)': (8, 63.20),
-    '(300)/(221)': (9, 67.54),
-    '(310)': (10, 71.72),
-    '(311)': (11, 75.82),
-    '(222)': (12, 79.84),
-    '(320)': (13, 83.82),
-    '(321)': (14, 87.78),
-    '(331)': (19, 95.66),
-    '(420)': (20, 99.64)
-}
+# Reflexiones: índice, N=h²+k²+l² y máximo principal detectado (Kalpha1)
+reflexiones_LaB6 = [
+    ('(100)', 1, 21.34),
+    ('(110)', 2, 30.38),
+    ('(111)', 3, 37.42),
+    ('(200)', 4, 43.50),
+    ('(210)', 5, 48.94),
+    ('(211)', 6, 53.96),
+    ('(220)', 8, 63.20),
+    ('(300)/(221)', 9, 67.54),
+    ('(310)', 10, 71.72),
+    ('(311)', 11, 75.82),
+    ('(222)', 12, 79.84),
+    ('(320)', 13, 83.82)
+]
 
-resultados_LaB6_red = []
+# def doblete_pvoigt_fondo(x, A, xc, fwhm, eta, b0, b1):
+#     # xc es la posición 2theta de Kalpha1
+#     theta1 = np.deg2rad(xc/2)
+#     argumento = (lambda_Ka2/lambda_Ka1)*np.sin(theta1)
+#     theta2 = np.arcsin(np.clip(argumento, -1, 1))
+#     xc2 = np.rad2deg(2*theta2)
+#     z1 = (x-xc)/fwhm
+#     z2 = (x-xc2)/fwhm
+#     g1 = np.exp(-4*np.log(2)*z1**2)
+#     l1 = 1/(1+4*z1**2)
+#     g2 = np.exp(-4*np.log(2)*z2**2)
+#     l2 = 1/(1+4*z2**2)
+#     perfil1 = (1-eta)*g1 + eta*l1
+#     perfil2 = (1-eta)*g2 + eta*l2
+#     return b0 + b1*(x-xc) + A*(perfil1 + rel_int_Ka2*perfil2)
 
-for hkl, (N, centro_ref) in reflexiones_LaB6.items():
-    try:
-        xp, popt, pcov = analizar_pico(
-            dostheta_LaB6, intensity_LaB6,
-            centro_ref, ventana=0.45
-        )
-        A, xc, fwhm_deg, eta, b0, b1 = popt
-
-        theta_rad = np.deg2rad(xc/2)
-        a_A = lambda_Ka1*np.sqrt(N)/(2*np.sin(theta_rad))
-
-        xc_err = np.sqrt(max(pcov[1, 1], 0))
-        theta_err_rad = np.deg2rad(xc_err/2)
-        a_err_A = a_A/np.tan(theta_rad)*theta_err_rad
-
-        resultados_LaB6_red.append({
-            'Reflexión': hkl,
-            'N': N,
-            '2theta (°)': xc,
-            'FWHM (°)': fwhm_deg,
-            'Error FWHM (°)': np.sqrt(max(pcov[2, 2], 0)),
-            'a (Å)': a_A,
-            'Error a (Å)': a_err_A
-        })
-    except (ValueError, RuntimeError) as e:
-        print(f'{hkl}: no se pudo ajustar ({e})')
-
-tabla_LaB6_red = pd.DataFrame(resultados_LaB6_red)
-print(tabla_LaB6_red.to_string(index=False, formatters={
-    '2theta (°)': lambda v: f'{v:.4f}',
-    'FWHM (°)': lambda v: f'{v:.4f}',
-    'Error FWHM (°)': lambda v: f'{v:.4f}',
-    'a (Å)': lambda v: f'{v:.6f}',
-    'Error a (Å)': lambda v: f'{v:.6f}'
-}))
-
-if len(tabla_LaB6_red) > 0:
-    print(f'\nParámetro de red de referencia: {a_ref_LaB6:.7f} Å')
-    print(f'Promedio simple obtenido: {tabla_LaB6_red["a (Å)"].mean():.7f} Å')
-#%%
-#%% Doble pseudo-Voigt para el doblete Cu Kalpha
-lambda_Ka1 = 1.5406  # Å
-lambda_Ka2 = 1.5444  # Å
-rel_int_Ka2 = 0.5    # Intensidad Kalpha2 / Kalpha1
-
-def doblete_pvoigt_fondo(x, A, xc, fwhm, eta, b0, b1):
-    """
-    Ajusta un doblete Cu Kalpha1/Kalpha2 con dos pseudo-Voigt
-    de igual anchura y fracción lorentziana, sobre un fondo lineal.
-
-    A es la amplitud de Kalpha1.
-    xc es la posición 2theta de Kalpha1.
-    """
+def doblete_pvoigt_fondo(x, A, xc, fwhm, eta, rel_int_Ka2, b0, b1):
     theta1 = np.deg2rad(xc/2)
-    theta2 = np.arcsin(np.clip(
-        lambda_Ka2/lambda_Ka1*np.sin(theta1), -1, 1
-    ))
+    argumento = (lambda_Ka2/lambda_Ka1)*np.sin(theta1)
+    theta2 = np.arcsin(np.clip(argumento, -1, 1))
     xc2 = np.rad2deg(2*theta2)
 
     z1 = (x-xc)/fwhm
     z2 = (x-xc2)/fwhm
+    g1 = np.exp(-4*np.log(2)*z1**2)
+    l1 = 1/(1+4*z1**2)
+    g2 = np.exp(-4*np.log(2)*z2**2)
+    l2 = 1/(1+4*z2**2)
 
-    gauss1 = np.exp(-4*np.log(2)*z1**2)
-    lorentz1 = 1/(1+4*z1**2)
-    perfil1 = (1-eta)*gauss1 + eta*lorentz1
-
-    gauss2 = np.exp(-4*np.log(2)*z2**2)
-    lorentz2 = 1/(1+4*z2**2)
-    perfil2 = (1-eta)*gauss2 + eta*lorentz2
+    perfil1 = (1-eta)*g1 + eta*l1
+    perfil2 = (1-eta)*g2 + eta*l2
 
     return b0 + b1*(x-xc) + A*(perfil1 + rel_int_Ka2*perfil2)
 
-#%% Ajuste del doblete Cu Kalpha en LaB6
-resultados_LaB6_doblete = []
-fig, ax = plt.subplots(figsize=(12, 6), constrained_layout=True)
-ax.plot(dostheta_LaB6, intensity_LaB6, '-', color='0.7', lw=0.8, label='LaB$_6$')
+resultados_LaB6 = []
+ajustes_LaB6 = {}
 
-for hkl, (N, centro_ref) in reflexiones_LaB6.items():
-    if centro_ref > 85:
+for hkl, N, centro_ref in reflexiones_LaB6:
+    # Ventana local alrededor de la reflexión
+    ventana = 0.55
+    mask = (dostheta_LaB6 >= centro_ref-ventana) & (dostheta_LaB6 <= centro_ref+ventana)
+    xp = dostheta_LaB6[mask]
+    yp = intensity_LaB6[mask]
+    if len(xp) < 10:
+        print(f'{hkl}: no hay suficientes puntos para ajustar')
         continue
+
+    # Inicialización usando el máximo detectado más cercano
+    candidatos = [
+        (i, theta, intens) for i, theta, intens in picos_LaB6
+        if centro_ref-0.25 <= theta <= centro_ref+0.25
+    ]
+    if candidatos:
+        _, xc0, intens0 = min(candidatos, key=lambda p: abs(p[1]-centro_ref))
+    else:
+        xc0 = xp[np.argmax(yp)]
+        intens0 = np.max(yp)
+
+    b0 = np.percentile(yp, 10)
+    A0 = max(intens0-b0, 1e-6)
+    fwhm0 = 0.07
+
     try:
-        ventana = 0.45
-        mask = (
-            (dostheta_LaB6 >= centro_ref-ventana) &
-            (dostheta_LaB6 <= centro_ref+ventana)
-        )
-        xp = dostheta_LaB6[mask]
-        yp = intensity_LaB6[mask]
-        if len(xp) < 10:
-            raise ValueError('Pocos puntos para ajustar el pico')
-
-        b0 = np.percentile(yp, 10)
-        imax = np.argmax(yp)
-        xc0 = xp[imax]
-        A0 = max(yp[imax]-b0, 1e-6)
-        fwhm0 = max(3*np.median(np.diff(xp)), 0.05)
-
         popt, pcov = curve_fit(
             doblete_pvoigt_fondo, xp, yp,
-            p0=[A0, xc0, fwhm0, 0.5, b0, 0],
+            p0=[A0, xc0, fwhm0, 0.5, 0.5, b0, 0],
             bounds=(
-                [0, centro_ref-0.25, 0.005, 0, -np.inf, -np.inf],
-                [np.inf, centro_ref+0.25, 0.3, 1, np.inf, np.inf]
-            ),
-            maxfev=50000
-        )
+                [0, centro_ref-0.25, 0.005, 0, 0, -np.inf, -np.inf],
+                [np.inf, centro_ref+0.25, 0.30, 1, 1, np.inf, np.inf]
+            ),maxfev=50000)
 
-        A, xc1, fwhm_deg, eta, b0, b1 = popt
-        err_fwhm = np.sqrt(max(pcov[2, 2], 0))
-        err_xc = np.sqrt(max(pcov[1, 1], 0))
+        A, xc, fwhm, eta, rel_int_Ka2, b0_fit, b1 = popt        
+        errores = np.sqrt(np.maximum(np.diag(pcov), 0))
+        err_xc = errores[1]
+        err_fwhm = errores[2]
 
-        theta1 = np.deg2rad(xc1/2)
-        theta2 = np.arcsin(lambda_Ka2/lambda_Ka1*np.sin(theta1))
+        theta1 = np.deg2rad(xc/2)
+        theta2 = np.arcsin(np.clip(lambda_Ka2/lambda_Ka1*np.sin(theta1), -1, 1))
         xc2 = np.rad2deg(2*theta2)
-        a_A = lambda_Ka1*np.sqrt(N)/(2*np.sin(theta1))
 
-        resultados_LaB6_doblete.append({
+        # Parámetro de red calculado con Kalpha1
+        a = lambda_Ka1*np.sqrt(N)/(2*np.sin(theta1))
+        err_a = abs(a/np.tan(theta1))*np.deg2rad(err_xc/2)
+
+        resultados_LaB6.append({
             'Reflexión': hkl,
             'N': N,
-            '2theta Ka1 (°)': xc1,
+            '2theta Ka1 (°)': xc,
             '2theta Ka2 (°)': xc2,
-            'FWHM común (°)': fwhm_deg,
+            'FWHM Ka1 (°)': fwhm,
             'Error FWHM (°)': err_fwhm,
             'eta': eta,
-            'a (Å)': a_A,
-            'Error centro (°)': err_xc
-        })
+            'a (Å)': a,
+            'Error centro (°)': err_xc,
+            'Error a (Å)': err_a})
 
-        xfit = np.linspace(xp.min(), xp.max(), 400)
-        ax.plot(xfit, doblete_pvoigt_fondo(xfit, *popt), lw=1.2,
-                label=f'{hkl}: FWHM={fwhm_deg:.4f}°')
+        ajustes_LaB6[hkl] = (xp, yp, popt)
 
-    except (ValueError, RuntimeError) as e:
-        print(f'{hkl}: no se pudo ajustar ({e})')
+    except (RuntimeError, ValueError) as e:
+        print(f'{hkl}: fallo el ajuste ({e})')
 
-ax.set_xlim(20, 85)
-ax.set_ylim(0, None)
-ax.set_xlabel(r'$2\theta$ (°)')
-ax.set_ylabel('Intensidad (u.a.)')
-ax.set_title('LaB$_6$: ajuste de doblete Cu Kα')
-ax.grid()
-ax.legend(ncol=2, fontsize=8)
+df_LaB6 = pd.DataFrame(resultados_LaB6)
+display(df_LaB6.round(6))
+
+#%% Gráficos de los ajustes del doblete
+fig, axs = plt.subplots(3, 4, figsize=(17, 10), constrained_layout=True)
+axs = axs.ravel()
+
+for ax, (hkl, N, centro_ref) in zip(axs, reflexiones_LaB6):
+    if hkl not in ajustes_LaB6:
+        ax.set_visible(False)
+        continue
+
+    xp, yp, popt = ajustes_LaB6[hkl]
+    xfit = np.linspace(xp.min(), xp.max(), 1000)
+    yfit = doblete_pvoigt_fondo(xfit, *popt)
+
+    ax.plot(xp, yp, '.', ms=2, color='0.35', label='Datos')
+    ax.plot(xfit, yfit, '-', lw=1.3, label='Ajuste doblete')
+    ax.axvline(popt[1], color='tab:red', ls='--', lw=0.8, label=r'$K\alpha_1$')
+    theta2 = np.arcsin(np.clip(lambda_Ka2/lambda_Ka1*np.sin(np.deg2rad(popt[1]/2)), -1, 1))
+    xc2 = np.rad2deg(2*theta2)
+    ax.axvline(xc2, color='tab:blue', ls=':', lw=0.8, label=r'$K\alpha_2$')
+    ax.set_title(hkl)
+    ax.set_xlabel(r'$2\theta$ (°)')
+    ax.grid(alpha=0.3)
+
+axs[0].set_ylabel('Intensidad (u.a.)')
+axs[4].set_ylabel('Intensidad (u.a.)')
+axs[8].set_ylabel('Intensidad (u.a.)')
+axs[0].legend(fontsize=8)
+for ax in axs[len(reflexiones_LaB6):]:
+    ax.set_visible(False)
+
+plt.savefig('fits.png',dpi=300)
 plt.show()
 
-#%% Tabla de resultados del doblete
-tabla_LaB6_doblete = pd.DataFrame(resultados_LaB6_doblete)
-print(tabla_LaB6_doblete.to_string(index=False, formatters={
-    '2theta Ka1 (°)': lambda v: f'{v:.4f}',
-    '2theta Ka2 (°)': lambda v: f'{v:.4f}',
-    'FWHM común (°)': lambda v: f'{v:.4f}',
-    'Error FWHM (°)': lambda v: f'{v:.4f}',
-    'eta': lambda v: f'{v:.3f}',
-    'a (Å)': lambda v: f'{v:.6f}',
-    'Error centro (°)': lambda v: f'{v:.4f}'
-}))
+#% Perfil instrumental: FWHM de Kalpha1 en función de 2theta
+fig, ax = plt.subplots(figsize=(8, 5), constrained_layout=True)
+ax.errorbar(
+    df_LaB6['2theta Ka1 (°)'],
+    df_LaB6['FWHM Ka1 (°)'],
+    yerr=df_LaB6['Error FWHM (°)'],
+    fmt='o', capsize=3, label=r'$K\alpha_1$'
+)
+ax.set_xlabel(r'$2\theta$ (°)')
+ax.set_ylabel('FWHM (°)')
+ax.set_title(r'Ancho del perfil de $K\alpha_1$ para LaB$_6$')
+ax.grid(alpha=0.3)
+ax.legend()
+ax.set_xlabel('2θ (°)')
+plt.show()
 
-#%% Ajuste pseudo-Voigt de los picos del patrón LaB6
-# resultados_LaB6 = []
-# fig, ax = plt.subplots(figsize=(12, 6), constrained_layout=True)
-# ax.plot(dostheta_LaB6, intensity_LaB6, '-', color='0.7', lw=0.8, label='LaB$_6$')
-
-# for i, centro_ref, intensidad in picos_LaB6:
-#     try:
-#         xp, popt, pcov = analizar_pico(
-#             dostheta_LaB6,
-#             intensity_LaB6,
-#             centro_ref,
-#             ventana=0.9,
-#             picos_detectados=picos_LaB6
-#         )
-#         A, xc, fwhm_deg, eta, b0, b1 = popt
-#         fwhm_err_deg = np.sqrt(max(pcov[2, 2], 0))
-#         xc_err_deg = np.sqrt(max(pcov[1, 1], 0))
-
-#         resultados_LaB6.append({
-#             'Índice': i,
-#             '2theta detectado (°)': centro_ref,
-#             '2theta ajustado (°)': xc,
-#             'Error 2theta (°)': xc_err_deg,
-#             'FWHM (°)': fwhm_deg,
-#             'Error FWHM (°)': fwhm_err_deg,
-#             'eta': eta
-#         })
-
-#         xfit = np.linspace(xp.min(), xp.max(), 300)
-#         ax.plot(xfit, pvoigt_fondo(xfit, *popt), lw=1.2,
-#                 label=f'{xc:.2f}°; FWHM={fwhm_deg:.4f}°')
-#     except (ValueError, RuntimeError) as e:
-#         print(f'Pico en {centro_ref:.2f}°: no se pudo ajustar ({e})')
-
-# ax.set_xlim(20, 100)
-# ax.set_ylim(0, None)
-# ax.set_xlabel(r'$2\theta$ (°)')
-# ax.set_ylabel('Intensidad (u.a.)')
-# ax.set_title('LaB$_6$: ajuste pseudo-Voigt')
-# ax.grid()
-# ax.legend(ncol=2, fontsize=8, frameon=True)
-# plt.show()
-
-# #%% Tabla de anchuras del patrón LaB6
-# tabla_LaB6 = pd.DataFrame(resultados_LaB6)
-# formatos_LaB6 = {
-#     'Índice': lambda v: f'{v:^7.0f}|',
-#     '2theta detectado (°)': lambda v: f'{v:^20.4f}|',
-#     '2theta ajustado (°)': lambda v: f'{v:^20.4f}|',
-#     'Error 2theta (°)': lambda v: f'{v:^17.4f}|',
-#     'FWHM (°)': lambda v: f'{v:^10.4f}|',
-#     'Error FWHM (°)': lambda v: f'{v:^15.4f}|',
-#     'eta': lambda v: f'{v:^7.3f}|'
-# }
-# print(tabla_LaB6.to_string(index=False, formatters=formatos_LaB6))
-
+#% Resumen del parámetro de red
+print(f'a promedio = {df_LaB6["a (Å)"].mean():.6f} Å')
+print(f'Desviación estándar entre reflexiones = {df_LaB6["a (Å)"].std(ddof=1):.6f} Å')
+print(f'Referencia NIST SRM 660c = {a_ref_LaB6:.6f} Å')
+print(f'Diferencia relativa = {(df_LaB6["a (Å)"].mean()/a_ref_LaB6-1)*100:.4f} %')
 
 #%% Importo Data
 data_M1 = np.loadtxt('data_DRX/M01.ASC', skiprows=0)
@@ -475,121 +657,59 @@ intensity_M12 = data_M12[:, 1]
 
 labels=['M1', 'M2', 'M3', 'M4', 'M5', 'M6', 'M7', 'M9', 'M10', 'M11', 'M12']
 colors=['C0', 'C1', 'C2', 'C3', 'C4', 'C5', 'C6', 'C7', 'C8', 'C9', 'C10']
-# %% ploteo todos 
-# fig,(ax,ax2,ax3)=plt.subplots(3,1,figsize=(10,8), constrained_layout=True,sharex=True)
-# ax.plot(dostheta_M1, intensity_M1/max(intensity_M1)+0.0,lw=0.9, label=labels[0],zorder=1)
-# ax.plot(dostheta_M2, intensity_M2/max(intensity_M2)+0.2,lw=0.9, label=labels[1],zorder=2)
-# ax.plot(dostheta_M3, intensity_M3/max(intensity_M3)+0.4,lw=0.9, label=labels[2],zorder=3)    
-# ax.plot(dostheta_M4, intensity_M4/max(intensity_M4)+0.6,lw=0.9, label=labels[3],zorder=1)
+#%% ploteo todos 
+fig_all,(ax,ax2,ax3)=plt.subplots(3,1,figsize=(10,8), constrained_layout=True,sharex=True)
+ax.plot(dostheta_M1, intensity_M1/max(intensity_M1)+0.0,lw=0.9, label=labels[0],zorder=1)
+ax.plot(dostheta_M2, intensity_M2/max(intensity_M2)+0.2,lw=0.9, label=labels[1],zorder=2)
+ax.plot(dostheta_M3, intensity_M3/max(intensity_M3)+0.4,lw=0.9, label=labels[2],zorder=3)    
+ax.plot(dostheta_M4, intensity_M4/max(intensity_M4)+0.6,lw=0.9, label=labels[3],zorder=1)
 
-# ax2.plot(dostheta_M5, intensity_M5/max(intensity_M5)+0.0,lw=0.9, label=labels[4],zorder=2)
-# ax2.plot(dostheta_M6, intensity_M6/max(intensity_M6)+0.2,lw=0.9, label=labels[5],zorder=3)    
-# ax2.plot(dostheta_M7, intensity_M7/max(intensity_M7)+0.4,lw=0.9, label=labels[6],zorder=1)
-# ax2.plot(dostheta_M9, intensity_M9/max(intensity_M9)+0.6,lw=0.9, label=labels[7],zorder=2)
+ax2.plot(dostheta_M5, intensity_M5/max(intensity_M5)+0.0,lw=0.9, label=labels[4],zorder=2)
+ax2.plot(dostheta_M6, intensity_M6/max(intensity_M6)+0.2,lw=0.9, label=labels[5],zorder=3)    
+ax2.plot(dostheta_M7, intensity_M7/max(intensity_M7)+0.4,lw=0.9, label=labels[6],zorder=1)
+ax2.plot(dostheta_M9, intensity_M9/max(intensity_M9)+0.6,lw=0.9, label=labels[7],zorder=2)
 
-# ax3.plot(dostheta_M10, intensity_M10/max(intensity_M10)+0.4,lw=0.9, label=labels[8],zorder=3)    
-# ax3.plot(dostheta_M11, intensity_M11/max(intensity_M11)+0.0,lw=0.9, label=labels[9],zorder=1)
-# ax3.plot(dostheta_M12, intensity_M12/max(intensity_M12)+0.2,lw=0.9, label=labels[10],zorder=2)
+ax3.plot(dostheta_M10, intensity_M10/max(intensity_M10)+0.4,lw=0.9, label=labels[8],zorder=3)    
+ax3.plot(dostheta_M11, intensity_M11/max(intensity_M11)+0.0,lw=0.9, label=labels[9],zorder=1)
+ax3.plot(dostheta_M12, intensity_M12/max(intensity_M12)+0.2,lw=0.9, label=labels[10],zorder=2)
 
 
-# for a in (ax,ax2,ax3):
-#     a.legend(ncol=2,frameon=True,shadow=True)
-#     a.grid()            
-#     a.set_ylabel('Intensidad (u.a.)')
-#     a.set_ylim(0,)
-# ax3.set_xlim(20,80)
-# ax3.set_xlabel('2θ (°)')
-# plt.suptitle('DRX en polvo')
-# plt.savefig('DRX_M1_M2_M3_M4_M5_M6_M7_M9_M10_M11_M12.png')
-# plt.show()
+for a in (ax,ax2,ax3):
+    a.legend(ncol=2,frameon=True,shadow=True)
+    a.grid()            
+    a.set_ylabel('Intensidad (u.a.)')
+    a.set_ylim(0,)
+ax3.set_xlim(20,80)
+ax3.set_xlabel('2θ (°)')
+plt.suptitle('DRX en polvo')
+plt.show()
 
-#%% Analisis de picos M1 
-peaks_M1, props_M1 = find_peaks(intensity_M1,prominence=25,width=2,distance=50)
+#%% Análisis de picos M1
+peaks_M1, props_M1 = find_peaks(intensity_M1, prominence=25, width=2, distance=50)
+picos_M1 = list(zip(peaks_M1, dostheta_M1[peaks_M1], intensity_M1[peaks_M1]))
 
-fig11,ax=plt.subplots(figsize=(10,5), constrained_layout=True,sharex=True)
-ax.plot(dostheta_M1, intensity_M1,'-', label='raw')
+fig_M1a, ax = plt.subplots(figsize=(10,5), constrained_layout=True)
+ax.plot(dostheta_M1, intensity_M1, '-', label='raw')
 ax.plot(dostheta_M1[peaks_M1], intensity_M1[peaks_M1], 'r.', label='peaks')
-
 ax.set_xlim(20,80)
 ax.set_ylim(0,)
 ax.grid()
 ax.legend()
-plt.savefig('DRX_M1_peaks.png')
+ax.set_xlabel('2θ (°)')
 plt.show()
 
-picos_M1 = list(zip(peaks_M1, dostheta_M1[peaks_M1], intensity_M1[peaks_M1]))
 print('M1',f'{len(peaks_M1)} picos detectados\n')
-print('indx |  2θ (°) | Intensidad')
+print('indx | 2θ (°) | Intensidad')
 for i,theta,intens in picos_M1:
     print(f'{i:4} | {theta:7.2f} | {intens:7.0f}')
 
-#% Ajuste individual de cada reflexión
-resultados_M1 = []
-
-fig12, ax = plt.subplots(figsize=(10, 5), constrained_layout=True)
-ax.plot(dostheta_M1, intensity_M1,'-', color='0.4', lw=0.9, label='M1')
-
-for hkl, centro_ref in reflexiones.items():
-    try:
-        xp, popt, pcov = analizar_pico(dostheta_M1, intensity_M1, centro_ref, picos_detectados=picos_M1)
-        A, xc, fwhm_deg, eta, b0, b1 = popt
-
-        # Scherrer: beta debe estar en radianes de 2theta
-        theta_rad = np.deg2rad(xc/2)
-        beta_obs = np.deg2rad(fwhm_deg)
-
-        # Sin patrón de referencia, usamos la anchura observada
-        beta = beta_obs
-        D_nm = K*lambda_X/(beta*np.cos(theta_rad))/10
-
-        # Incertidumbre estadística aproximada de la FWHM
-        fwhm_err_deg = np.sqrt(max(pcov[2, 2], 0))
-        beta_err = np.deg2rad(fwhm_err_deg)
-        D_err_nm = D_nm*beta_err/beta
-
-        resultados_M1.append({
-            'Reflexión': hkl,
-            '2theta teo (°)': centro_ref,
-            '2theta (°)': xc,
-            'FWHM (°)': fwhm_deg,
-            'eta': eta,
-            'D aparente (nm)': D_nm,
-            'Error ajuste (nm)': D_err_nm
-        })
-
-        # Curva ajustada en la ventana del pico
-        xfit = np.linspace(xp.min(), xp.max(), 300)
-        ax.plot(xfit, pvoigt_fondo(xfit, *popt), lw=1.2,label=f'{hkl}: {xc:.2f}°')
-
-    except (ValueError, RuntimeError) as e:
-        print(f'{hkl}: no se pudo ajustar ({e})')
-
-ax.set_xlim(20, 80)
-ax.set_ylim(0, None)
-ax.set_xlabel(r'$2\theta$ (°)')
-ax.set_ylabel('Intensidad (u.a.)')
-ax.set_title('M1: ajuste pseudo-Voigt en reflexiones de magnetita')
-ax.grid()
-ax.legend(ncol=1,frameon=True,shadow=True)
-plt.show()
-
-#% Tabla de resultados
-tabla_M1 = pd.DataFrame(resultados_M1)
-formatos = {
-    'Reflexión': lambda v: f'{v:^9s}|',
-    '2theta teo (°)': lambda v: f'{v:^14.2f}|',
-    '2theta (°)': lambda v: f'{v:^10.4f}|',
-    'FWHM (°)': lambda v: f'{v:^8.4f}|',
-    'eta': lambda v: f'{v:^5.3f}|',
-    'D aparente (nm)': lambda v: f'{v:^15.2f}|',
-    'Error ajuste (nm)': lambda v: f'{v:^17.2f}|'
-    }
-
-print(tabla_M1.to_string(index=False, formatters=formatos))
+#M1 - Análisis de Scherrer
+tabla_M1, resumen_M1_sin, resumen_M1_con,picos_M1, fig_M1b,fig_M1c = analizar_muestra(
+    'M1', dostheta_M1, intensity_M1, picos_M1)
 
 #%% M2
 peaks_M2, props_M2 = find_peaks(intensity_M2,prominence=25,width=2,distance=30)
-fig,ax=plt.subplots(figsize=(9,5), constrained_layout=True,sharex=True)
+fig_M2a,ax=plt.subplots(figsize=(9,5), constrained_layout=True,sharex=True)
 ax.plot(dostheta_M2, intensity_M2,'-', label='raw')
 ax.plot(dostheta_M2[peaks_M2], intensity_M2[peaks_M2], 'r.', label='peaks')
 
@@ -597,6 +717,7 @@ ax.set_xlim(20,80)
 ax.set_ylim(0,)
 ax.grid()
 ax.legend()
+ax.set_xlabel('2θ (°)')
 plt.show()
 
 picos_M2 = list(zip(peaks_M2, dostheta_M2[peaks_M2], intensity_M2[peaks_M2]))
@@ -604,99 +725,60 @@ print('M2',f'{len(peaks_M2)} picos detectados\n')
 print('indx |  2θ (°) | Intensidad')
 for i,theta,intens in picos_M2:
     print(f'{i:4} | {theta:7.2f} | {intens:7.0f}')
-#% Ajuste individual de cada reflexión M2
-resultados_M2 = []
-fig, ax = plt.subplots(figsize=(10, 5), constrained_layout=True)
-ax.plot(dostheta_M2, intensity_M2, '-', color='0.4', lw=0.9, label='M2')
-for hkl, centro_ref in reflexiones.items():
-    try:
-        xp, popt, pcov = analizar_pico(dostheta_M2, intensity_M2, centro_ref, picos_detectados=picos_M2)
-        A, xc, fwhm_deg, eta, b0, b1 = popt
-        theta_rad = np.deg2rad(xc/2)
-        beta_obs = np.deg2rad(fwhm_deg)
-        beta = beta_obs
-        D_nm = K*lambda_X/(beta*np.cos(theta_rad))/10
-        fwhm_err_deg = np.sqrt(max(pcov[2, 2], 0))
-        beta_err = np.deg2rad(fwhm_err_deg)
-        D_err_nm = D_nm*beta_err/beta
-        resultados_M2.append({
-            'Reflexión': hkl,
-            '2theta teo (°)': centro_ref,
-            '2theta (°)': xc,
-            'FWHM (°)': fwhm_deg,
-            'eta': eta,
-            'D aparente (nm)': D_nm,
-            'Error ajuste (nm)': D_err_nm
-        })
-        xfit = np.linspace(xp.min(), xp.max(), 300)
-        ax.plot(xfit, pvoigt_fondo(xfit, *popt), lw=1.2, label=f'{hkl}: {xc:.2f}°')
-    except (ValueError, RuntimeError) as e:
-        print(f'{hkl}: no se pudo ajustar ({e})')
-ax.set_xlim(20, 80)
-ax.set_ylim(0, None)
-ax.set_xlabel(r'$2\theta$ (°)')
-ax.set_ylabel('Intensidad (u.a.)')
-ax.set_title('M2: ajuste pseudo-Voigt en reflexiones de magnetita')
-ax.grid()
-ax.legend(ncol=1, frameon=True, shadow=True)
-plt.show()
-tabla_M2 = pd.DataFrame(resultados_M2)
-formatos = {
-    'Reflexión': lambda v: f'{v:^9s}|',
-    '2theta teo (°)': lambda v: f'{v:^14.2f}|',
-    '2theta (°)': lambda v: f'{v:^10.4f}|',
-    'FWHM (°)': lambda v: f'{v:^8.4f}|',
-    'eta': lambda v: f'{v:^5.3f}|',
-    'D aparente (nm)': lambda v: f'{v:^15.2f}|',
-    'Error ajuste (nm)': lambda v: f'{v:^17.2f}|'
-}
-print(tabla_M2.to_string(index=False, formatters=formatos))
+#% M2 - Análisis de Scherrer
+tabla_M2, resumen_M2_sin, resumen_M2_con, picos_M2, fig_M2b,fig_M2c = analizar_muestra(
+    'M2', dostheta_M2, intensity_M2, picos_M2)
 
-#%% M3
-peaks_M3, props_M3 = find_peaks(intensity_M3,prominence=24,width=2,distance=30)
+#%% M3 - Detección de picos
+peaks_M3, props_M3 = find_peaks(intensity_M3, prominence=24, width=2, distance=30)
 
-fig,ax=plt.subplots(figsize=(9,5), constrained_layout=True,sharex=True)
+fig_3a,ax=plt.subplots(figsize=(9,5), constrained_layout=True,sharex=True)
 ax.plot(dostheta_M3, intensity_M3,'-', label='raw')
 ax.plot(dostheta_M3[peaks_M3], intensity_M3[peaks_M3], 'r.', label='peaks')
-
 ax.set_xlim(20,80)
 ax.set_ylim(0,)
 ax.grid()
 ax.legend()
+ax.set_xlabel('2θ (°)')
 plt.show()
 
-picos_M3 = zip(peaks_M3, dostheta_M3[peaks_M3], intensity_M3[peaks_M3])
+picos_M3 = list(zip(peaks_M3, dostheta_M3[peaks_M3], intensity_M3[peaks_M3]))
 print('M3',f'{len(peaks_M3)} picos detectados\n')
 print('indx |  2θ (°) | Intensidad')
 for i,theta,intens in picos_M3:
-    print(f'{i:4} | {theta:7.2f} | {intens:7.0f}')   
+    print(f'{i:4} | {theta:7.2f} | {intens:7.0f}')
 
+#% M3 - Análisis de Scherrer
+tabla_M3, resumen_M3_sin, resumen_M3_con, picos_M3, fig_M3b,fig_M3c = analizar_muestra(
+    'M3', dostheta_M3, intensity_M3, picos_M3)
 #%% M4 
-peaks_M4, props_M4 = find_peaks(intensity_M4,prominence=22,width=8,distance=20)
+# M4 - Detección de picos
+peaks_M4, props_M4 = find_peaks(intensity_M4, prominence=22, width=8, distance=20)
 
-
-fig,ax=plt.subplots(figsize=(9,5), constrained_layout=True,sharex=True)
+fig_4a,ax=plt.subplots(figsize=(9,5), constrained_layout=True,sharex=True)
 ax.plot(dostheta_M4, intensity_M4,'-', label='raw')
 ax.plot(dostheta_M4[peaks_M4], intensity_M4[peaks_M4], 'r.', label='peaks')
-
 ax.set_xlim(20,80)
 ax.set_ylim(0,)
 ax.grid()
 ax.legend()
+ax.set_xlabel('2θ (°)')
 plt.show()
 
-picos_M4 = zip(peaks_M4, dostheta_M4[peaks_M4], intensity_M4[peaks_M4])
+picos_M4 = list(zip(peaks_M4, dostheta_M4[peaks_M4], intensity_M4[peaks_M4]))
 print('M4',f'{len(peaks_M4)} picos detectados\n')
 print('indx |  2θ (°) | Intensidad')
 for i,theta,intens in picos_M4:
-    print(f'{i:4} | {theta:7.2f} | {intens:7.0f}')       
-
+    print(f'{i:4} | {theta:7.2f} | {intens:7.0f}')
+#% M4 - Análisis de Scherrer
+tabla_M4, resumen_M4_sin, resumen_M4_con, picos_M4, fig_M4b,fig_M4c= analizar_muestra(
+    'M4', dostheta_M4, intensity_M4, picos_M4)
 #%% M5 
 peaks_M5, props_M5 = find_peaks(intensity_M5,prominence=6,
                                 width=7,
                                 distance=20)
 
-fig,ax=plt.subplots(figsize=(9,5), constrained_layout=True,sharex=True)
+fig5a,ax=plt.subplots(figsize=(9,5), constrained_layout=True,sharex=True)
 ax.plot(dostheta_M5, intensity_M5,'-', label='raw')
 ax.plot(dostheta_M5[peaks_M5], intensity_M5[peaks_M5], 'r.', label='peaks')
 
@@ -706,18 +788,21 @@ ax.grid()
 ax.legend(title='M5',frameon=True,shadow=True)
 plt.show()
 
-picos_M5 = zip(peaks_M5, dostheta_M5[peaks_M5], intensity_M5[peaks_M5])
+picos_M5 = list(zip(peaks_M5, dostheta_M5[peaks_M5], intensity_M5[peaks_M5]))
 print('M5',f'{len(peaks_M5)} picos detectados\n')
 print('indx |  2θ (°) | Intensidad')
 for i,theta,intens in picos_M5:
     print(f'{i:4} | {theta:7.2f} | {intens:7.0f}')       
+#M5 - Análisis de Scherrer
+tabla_M5, resumen_M5_sin, resumen_M5_con, picos_M5, fig_M5b,fig_M5c = analizar_muestra(
+    'M5', dostheta_M5, intensity_M5, picos_M5)    
 #%% M6 
 peaks_M6, props_M6 = find_peaks(intensity_M6,
                                 prominence=15,
                                 width=3,
                                 distance=20)
 
-fig,ax=plt.subplots(figsize=(9,5), constrained_layout=True,sharex=True)
+fig_6a,ax=plt.subplots(figsize=(9,5), constrained_layout=True,sharex=True)
 ax.plot(dostheta_M6, intensity_M6,'-', label='raw')
 ax.plot(dostheta_M6[peaks_M6], intensity_M6[peaks_M6], 'r.', label='peaks')
 
@@ -725,21 +810,25 @@ ax.set_xlim(20,80)
 ax.set_ylim(0,)
 ax.grid()
 ax.legend()
+ax.set_xlabel('2θ (°)')
 plt.show()
 
-picos_M6 = zip(peaks_M6, dostheta_M6[peaks_M6], intensity_M6[peaks_M6])
+picos_M6 = list(zip(peaks_M6, dostheta_M6[peaks_M6], intensity_M6[peaks_M6]))
 print('M6',f'{len(peaks_M6)} picos detectados\n')
 print('indx |  2θ (°) | Intensidad')
 for i,theta,intens in picos_M6:
     print(f'{i:4} | {theta:7.2f} | {intens:7.0f}')   
 
+#M6 - Análisis de Scherrer
+tabla_M6, resumen_M6_sin, resumen_M6_con, picos_M6, fig_M6b,fig_M6c = analizar_muestra(
+    'M6', dostheta_M6, intensity_M6, picos_M6)
 #%% M7 
 peaks_M7, props_M7 = find_peaks(intensity_M7,
                                 prominence=20,
                                 width=7,
                                 distance=20)
 
-fig,ax=plt.subplots(figsize=(9,5), constrained_layout=True,sharex=True)
+fig_7a,ax=plt.subplots(figsize=(9,5), constrained_layout=True,sharex=True)
 ax.plot(dostheta_M7, intensity_M7,'-', label='raw')
 ax.plot(dostheta_M7[peaks_M7], intensity_M7[peaks_M7], 'r.', label='peaks')
 
@@ -747,13 +836,19 @@ ax.set_xlim(20,80)
 ax.set_ylim(0,)
 ax.grid()
 ax.legend()
+ax.set_xlabel('2θ (°)')
 plt.show()
 
-picos_M7 = zip(peaks_M7, dostheta_M7[peaks_M7], intensity_M7[peaks_M7])
+picos_M7 = list(zip(peaks_M7, dostheta_M7[peaks_M7], intensity_M7[peaks_M7]))
 print('M7',f'{len(peaks_M7)} picos detectados\n')
 print('indx |  2θ (°) | Intensidad')
 for i,theta,intens in picos_M7:
-    print(f'{i:4} | {theta:7.2f} | {intens:7.0f}')   
+    print(f'{i:4} | {theta:7.2f} | {intens:7.0f}')  
+
+#M7 - Análisis de Scherrer
+tabla_M7, resumen_M7_sin, resumen_M7_con, picos_M7, fig_M7b,fig_M7c = analizar_muestra(
+    'M7', dostheta_M7, intensity_M7, picos_M7)
+
 #%% M9
 peaks_M9, props_M9 = find_peaks(intensity_M9,
                                 height=30,
@@ -761,7 +856,7 @@ peaks_M9, props_M9 = find_peaks(intensity_M9,
                                 width=3,
                                 distance=10)
 
-fig,ax=plt.subplots(figsize=(9,5), constrained_layout=True,sharex=True)
+fig_9a,ax=plt.subplots(figsize=(9,5), constrained_layout=True,sharex=True)
 ax.plot(dostheta_M9, intensity_M9,'-', label='raw')
 ax.plot(dostheta_M9[peaks_M9], intensity_M9[peaks_M9], 'r.', label='peaks')
 
@@ -771,12 +866,14 @@ ax.grid()
 ax.legend(title='M9',frameon=True,shadow=True)
 plt.show()
 
-picos_M9 = zip(peaks_M9, dostheta_M9[peaks_M9], intensity_M9[peaks_M9])
+picos_M9 = list(zip(peaks_M9, dostheta_M9[peaks_M9], intensity_M9[peaks_M9]))
 print('M9',f'{len(peaks_M9)} picos detectados\n')
 print('indx |  2θ (°) | Intensidad')
 for i,theta,intens in picos_M9:
     print(f'{i:4} | {theta:7.2f} | {intens:7.0f}')       
-
+#M9 - Análisis de Scherrer
+tabla_M9, resumen_M9_sin, resumen_M9_con, picos_M9, fig_M9b,fig_M9c = analizar_muestra(
+    'M9', dostheta_M9, intensity_M9, picos_M9)
 #%% M10 
 peaks_M10, props_M10 = find_peaks(intensity_M10,
                                 height=24,
@@ -784,8 +881,7 @@ peaks_M10, props_M10 = find_peaks(intensity_M10,
                                 width=2,
                                 distance=15)
 
-
-fig,ax=plt.subplots(figsize=(9,5), constrained_layout=True,sharex=True)
+fig_10a,ax=plt.subplots(figsize=(9,5), constrained_layout=True,sharex=True)
 ax.plot(dostheta_M10, intensity_M10,'-', label='raw')
 ax.plot(dostheta_M10[peaks_M10], intensity_M10[peaks_M10], 'r.', label='peaks')
 
@@ -795,11 +891,15 @@ ax.grid()
 ax.legend(title='M10',frameon=True,shadow=True)
 plt.show()
 
-picos_M10 = zip(peaks_M10, dostheta_M10[peaks_M10], intensity_M10[peaks_M10])
+picos_M10 = list(zip(peaks_M10, dostheta_M10[peaks_M10], intensity_M10[peaks_M10]))
 print('M10',f'{len(peaks_M10)} picos detectados\n')
 print('indx |  2θ (°) | Intensidad')
 for i,theta,intens in picos_M10:
     print(f'{i:4} | {theta:7.2f} | {intens:7.0f}')    
+
+#M10 - Análisis de Scherrer
+tabla_M10, resumen_M10_sin, resumen_M10_con, picos_M10, fig_M10b,fig_M10c_ = analizar_muestra(
+    'M10', dostheta_M10, intensity_M10, picos_M10)
 
 #%%  M11
 peaks_M11, props_M11 = find_peaks(intensity_M11,
@@ -808,27 +908,32 @@ peaks_M11, props_M11 = find_peaks(intensity_M11,
                                 width=4,
                                 distance=20)
 
-fig,ax=plt.subplots(figsize=(9,5), constrained_layout=True,sharex=True)
+# peaks_M11=peaks_M11[:-1]
+
+fig_M11a,ax=plt.subplots(figsize=(9,5), constrained_layout=True,sharex=True)
 ax.plot(dostheta_M11, intensity_M11,'-', label='raw')
 ax.plot(dostheta_M11[peaks_M11], intensity_M11[peaks_M11], 'r.', label='peaks')
 
 ax.set_xlim(20,80)
-ax.set_ylim(0,)
+ax.set_ylim(0,360)
 ax.grid()
 ax.legend()
+ax.set_xlabel('2θ (°)')
 plt.show()
 
-picos_M11 = zip(peaks_M11, dostheta_M11[peaks_M11], intensity_M11[peaks_M11])
+
+picos_M11 = list(zip(peaks_M11, dostheta_M11[peaks_M11], intensity_M11[peaks_M11]))
 print('M11',f'{len(peaks_M11)} picos detectados\n')
 print('indx |  2θ (°) | Intensidad')
 for i,theta,intens in picos_M11:
     print(f'{i:4} | {theta:7.2f} | {intens:7.0f}')
-
-
+#M11 - Análisis de Scherrer
+tabla_M11, resumen_M11_sin, resumen_M11_con, picos_M11, fig_M11b,fig_M11c = analizar_muestra(
+    'M11', dostheta_M11, intensity_M11, picos_M11[:-1])
 #%% M12 
 peaks_M12, props_M12 = find_peaks(intensity_M12,prominence=25,width=2,distance=50)
 
-fig,ax=plt.subplots(figsize=(9,5), constrained_layout=True,sharex=True)
+fig_12a,ax=plt.subplots(figsize=(9,5), constrained_layout=True,sharex=True)
 ax.plot(dostheta_M12, intensity_M12,'-', label='raw')
 ax.plot(dostheta_M12[peaks_M12], intensity_M12[peaks_M12], 'r.', label='peaks')
 
@@ -836,11 +941,24 @@ ax.set_xlim(20,80)
 ax.set_ylim(0,)
 ax.grid()
 ax.legend()
+ax.set_xlabel('2θ (°)')
 plt.show()
 
-picos_M12 = zip(peaks_M12, dostheta_M12[peaks_M12], intensity_M12[peaks_M12])
+picos_M12 = list(zip(peaks_M12, dostheta_M12[peaks_M12], intensity_M12[peaks_M12]))
 print('M12',f'{len(peaks_M12)} picos detectados\n')
 print('indx |  2θ (°) | Intensidad')
 for i,theta,intens in picos_M12:
     print(f'{i:4} | {theta:7.2f} | {intens:7.0f}')
-#%%
+
+#M12 - Análisis de Scherrer
+tabla_M12, resumen_M12_sin, resumen_M12_con, picos_M12, fig_M12b,fig_M12c = analizar_muestra(
+    'M12', dostheta_M12, intensity_M12, picos_M12)
+
+
+
+# %% salvo todas las figuras
+
+fig_all.savefig('DRX_M1_M2_M3_M4_M5_M6_M7_M9_M10_M11_M12.png')
+fig_M1a.savefig(,dpi=300)
+fig_M1b.savefig(,dpi=300)
+fig_M1c.savefig(,dpi=300)

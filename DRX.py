@@ -206,7 +206,6 @@ def promedio_cristalita(tabla, columna_D, columna_err):
         'N reflexiones': len(D)}
 
 #%% Función general de análisis DRX por muestra
-
 def analizar_muestra(nombre, dostheta, intensity, picos_detectados):
     picos = picos_detectados
     # A partir de acá, mantené el tratamiento de ajuste,
@@ -275,6 +274,7 @@ def analizar_muestra(nombre, dostheta, intensity, picos_detectados):
             print(f'{hkl}: no se pudo ajustar ({e})')
 
     ax.set_xlim(20,80)
+    ax.set_title('M1 - Difractograma de RX')
     ax.set_ylim(0,None)
     ax.set_xlabel(r'$2\theta$ (°)')
     ax.set_ylabel('Intensidad (u.a.)')
@@ -388,7 +388,7 @@ dostheta_LaB6 = data_LaB6[:, 0]
 intensity_LaB6 = data_LaB6[:, 1]
 
 # Visualización del difractograma
-fig, ax = plt.subplots(figsize=(10, 5), constrained_layout=True)
+fig_LaB6a, ax = plt.subplots(figsize=(10, 5), constrained_layout=True)
 ax.plot(dostheta_LaB6, intensity_LaB6, '-', color='0.3', lw=0.9, label='LaB$_6$')
 ax.set_xlim(20,85)
 ax.set_ylim(0, None)
@@ -409,7 +409,7 @@ peaks_LaB6, props_LaB6 = find_peaks(
 
 picos_LaB6 = list(zip(peaks_LaB6,dostheta_LaB6[peaks_LaB6],intensity_LaB6[peaks_LaB6]))
 
-fig, ax = plt.subplots(figsize=(10, 5), constrained_layout=True)
+fig_LaB6b, ax = plt.subplots(figsize=(10, 5), constrained_layout=True)
 ax.plot(dostheta_LaB6, intensity_LaB6, '-', color='0.3', lw=0.9, label='LaB$_6$')
 ax.plot(dostheta_LaB6[peaks_LaB6], intensity_LaB6[peaks_LaB6], 'r.', ms=6, label='Picos detectados')
 ax.set_xlim(20, 85)
@@ -555,7 +555,7 @@ df_LaB6 = pd.DataFrame(resultados_LaB6)
 display(df_LaB6.round(6))
 
 #%% Gráficos de los ajustes del doblete
-fig, axs = plt.subplots(3, 4, figsize=(17, 10), constrained_layout=True)
+fig_LaB6c, axs = plt.subplots(3, 4, figsize=(17, 10), constrained_layout=True)
 axs = axs.ravel()
 
 for ax, (hkl, N, centro_ref) in zip(axs, reflexiones_LaB6):
@@ -584,11 +584,10 @@ axs[0].legend(fontsize=8)
 for ax in axs[len(reflexiones_LaB6):]:
     ax.set_visible(False)
 
-plt.savefig('fits.png',dpi=300)
 plt.show()
 
 #% Perfil instrumental: FWHM de Kalpha1 en función de 2theta
-fig, ax = plt.subplots(figsize=(8, 5), constrained_layout=True)
+fig_Lab6_perfil, ax = plt.subplots(figsize=(8, 5), constrained_layout=True)
 ax.errorbar(
     df_LaB6['2theta Ka1 (°)'],
     df_LaB6['FWHM Ka1 (°)'],
@@ -658,7 +657,7 @@ intensity_M12 = data_M12[:, 1]
 labels=['M1', 'M2', 'M3', 'M4', 'M5', 'M6', 'M7', 'M9', 'M10', 'M11', 'M12']
 colors=['C0', 'C1', 'C2', 'C3', 'C4', 'C5', 'C6', 'C7', 'C8', 'C9', 'C10']
 #%% ploteo todos 
-fig_all,(ax,ax2,ax3)=plt.subplots(3,1,figsize=(10,8), constrained_layout=True,sharex=True)
+fig_all,(ax,ax2,ax3)=plt.subplots(3,1,figsize=(11,8), constrained_layout=True,sharex=True)
 ax.plot(dostheta_M1, intensity_M1/max(intensity_M1)+0.0,lw=0.9, label=labels[0],zorder=1)
 ax.plot(dostheta_M2, intensity_M2/max(intensity_M2)+0.2,lw=0.9, label=labels[1],zorder=2)
 ax.plot(dostheta_M3, intensity_M3/max(intensity_M3)+0.4,lw=0.9, label=labels[2],zorder=3)    
@@ -675,27 +674,40 @@ ax3.plot(dostheta_M12, intensity_M12/max(intensity_M12)+0.2,lw=0.9, label=labels
 
 
 for a in (ax,ax2,ax3):
-    a.legend(ncol=2,frameon=True,shadow=True)
-    a.grid()            
+    a.legend(ncol=1,bbox_to_anchor=(1,1),frameon=True,shadow=True)
+    a.grid(axis='x')            
     a.set_ylabel('Intensidad (u.a.)')
     a.set_ylim(0,)
-ax3.set_xlim(20,80)
+    for hkl, posicion in reflexiones.items():
+        a.axvline(x=posicion, color='k', ls='--',alpha=0.8,lw=0.8)
+        a.text(posicion,0.95,hkl,rotation=0,ha='right',va='top',
+               transform=a.get_xaxis_transform(),fontsize=8)
+    
+    ax3.set_xlim(20,80)
 ax3.set_xlabel('2θ (°)')
 plt.suptitle('DRX en polvo')
 plt.show()
 
-#%% Análisis de picos M1
+#%% M1
 peaks_M1, props_M1 = find_peaks(intensity_M1, prominence=25, width=2, distance=50)
 picos_M1 = list(zip(peaks_M1, dostheta_M1[peaks_M1], intensity_M1[peaks_M1]))
 
 fig_M1a, ax = plt.subplots(figsize=(10,5), constrained_layout=True)
 ax.plot(dostheta_M1, intensity_M1, '-', label='raw')
 ax.plot(dostheta_M1[peaks_M1], intensity_M1[peaks_M1], 'r.', label='peaks')
+
+for i, theta, intens in picos_M1:
+    ax.annotate(f'{theta:.2f}°', (theta, intens),
+                xytext=(0,5), textcoords='offset points',
+                ha='center', va='bottom', rotation=0, fontsize=8)
+
 ax.set_xlim(20,80)
+ax.set_title('M1 - Difractograma de RX')
 ax.set_ylim(0,)
 ax.grid()
 ax.legend()
 ax.set_xlabel('2θ (°)')
+ax.set_ylabel('Intensidad (u.a.)')
 plt.show()
 
 print('M1',f'{len(peaks_M1)} picos detectados\n')
@@ -709,18 +721,25 @@ tabla_M1, resumen_M1_sin, resumen_M1_con,picos_M1, fig_M1b,fig_M1c = analizar_mu
 
 #%% M2
 peaks_M2, props_M2 = find_peaks(intensity_M2,prominence=25,width=2,distance=30)
+picos_M2 = list(zip(peaks_M2, dostheta_M2[peaks_M2], intensity_M2[peaks_M2]))
 fig_M2a,ax=plt.subplots(figsize=(9,5), constrained_layout=True,sharex=True)
 ax.plot(dostheta_M2, intensity_M2,'-', label='raw')
 ax.plot(dostheta_M2[peaks_M2], intensity_M2[peaks_M2], 'r.', label='peaks')
+for i, theta, intens in picos_M2:
+    ax.annotate(f'{theta:.2f}°', (theta, intens),
+                xytext=(0,5), textcoords='offset points',
+                ha='center', va='bottom', rotation=0, fontsize=8)
 
 ax.set_xlim(20,80)
+ax.set_title('M2 - Difractograma de RX')
 ax.set_ylim(0,)
 ax.grid()
 ax.legend()
 ax.set_xlabel('2θ (°)')
+ax.set_ylabel('Intensidad (u.a.)')
+
 plt.show()
 
-picos_M2 = list(zip(peaks_M2, dostheta_M2[peaks_M2], intensity_M2[peaks_M2]))
 print('M2',f'{len(peaks_M2)} picos detectados\n')
 print('indx |  2θ (°) | Intensidad')
 for i,theta,intens in picos_M2:
@@ -731,18 +750,27 @@ tabla_M2, resumen_M2_sin, resumen_M2_con, picos_M2, fig_M2b,fig_M2c = analizar_m
 
 #%% M3 - Detección de picos
 peaks_M3, props_M3 = find_peaks(intensity_M3, prominence=24, width=2, distance=30)
+picos_M3 = list(zip(peaks_M3, dostheta_M3[peaks_M3], intensity_M3[peaks_M3]))
 
-fig_3a,ax=plt.subplots(figsize=(9,5), constrained_layout=True,sharex=True)
+fig_M3a,ax=plt.subplots(figsize=(9,5), constrained_layout=True,sharex=True)
 ax.plot(dostheta_M3, intensity_M3,'-', label='raw')
 ax.plot(dostheta_M3[peaks_M3], intensity_M3[peaks_M3], 'r.', label='peaks')
+
+for i, theta, intens in picos_M3:
+    ax.annotate(f'{theta:.2f}°', (theta, intens),
+                xytext=(0,5), textcoords='offset points',
+                ha='center', va='bottom', rotation=0, fontsize=8)
+
 ax.set_xlim(20,80)
+ax.set_title('M3 - Difractograma de RX')
 ax.set_ylim(0,)
 ax.grid()
 ax.legend()
 ax.set_xlabel('2θ (°)')
+ax.set_ylabel('Intensidad (u.a.)')
+
 plt.show()
 
-picos_M3 = list(zip(peaks_M3, dostheta_M3[peaks_M3], intensity_M3[peaks_M3]))
 print('M3',f'{len(peaks_M3)} picos detectados\n')
 print('indx |  2θ (°) | Intensidad')
 for i,theta,intens in picos_M3:
@@ -752,20 +780,24 @@ for i,theta,intens in picos_M3:
 tabla_M3, resumen_M3_sin, resumen_M3_con, picos_M3, fig_M3b,fig_M3c = analizar_muestra(
     'M3', dostheta_M3, intensity_M3, picos_M3)
 #%% M4 
-# M4 - Detección de picos
 peaks_M4, props_M4 = find_peaks(intensity_M4, prominence=22, width=8, distance=20)
+picos_M4 = list(zip(peaks_M4, dostheta_M4[peaks_M4], intensity_M4[peaks_M4]))
 
-fig_4a,ax=plt.subplots(figsize=(9,5), constrained_layout=True,sharex=True)
+fig_M4a,ax=plt.subplots(figsize=(9,5), constrained_layout=True,sharex=True)
 ax.plot(dostheta_M4, intensity_M4,'-', label='raw')
 ax.plot(dostheta_M4[peaks_M4], intensity_M4[peaks_M4], 'r.', label='peaks')
+for i, theta, intens in picos_M4:
+    ax.annotate(f'{theta:.2f}°', (theta, intens),
+                xytext=(0,5), textcoords='offset points',
+                ha='center', va='bottom', rotation=0, fontsize=8)
 ax.set_xlim(20,80)
+ax.set_title('M4 - Difractograma de RX')
 ax.set_ylim(0,)
 ax.grid()
 ax.legend()
 ax.set_xlabel('2θ (°)')
-plt.show()
+ax.set_ylabel('Intensidad (u.a.)')
 
-picos_M4 = list(zip(peaks_M4, dostheta_M4[peaks_M4], intensity_M4[peaks_M4]))
 print('M4',f'{len(peaks_M4)} picos detectados\n')
 print('indx |  2θ (°) | Intensidad')
 for i,theta,intens in picos_M4:
@@ -777,18 +809,24 @@ tabla_M4, resumen_M4_sin, resumen_M4_con, picos_M4, fig_M4b,fig_M4c= analizar_mu
 peaks_M5, props_M5 = find_peaks(intensity_M5,prominence=6,
                                 width=7,
                                 distance=20)
+picos_M5 = list(zip(peaks_M5, dostheta_M5[peaks_M5], intensity_M5[peaks_M5]))
 
-fig5a,ax=plt.subplots(figsize=(9,5), constrained_layout=True,sharex=True)
+fig_M5a,ax=plt.subplots(figsize=(9,5), constrained_layout=True,sharex=True)
 ax.plot(dostheta_M5, intensity_M5,'-', label='raw')
 ax.plot(dostheta_M5[peaks_M5], intensity_M5[peaks_M5], 'r.', label='peaks')
+for i, theta, intens in picos_M5:
+    ax.annotate(f'{theta:.2f}°', (theta, intens),
+                xytext=(0,5), textcoords='offset points',
+                ha='center', va='bottom', rotation=0, fontsize=8)
 
 ax.set_xlim(20,80)
+ax.set_title('M5 - Difractograma de RX')
 ax.set_ylim(0,)
 ax.grid()
-ax.legend(title='M5',frameon=True,shadow=True)
-plt.show()
+ax.legend()
+ax.set_xlabel('2θ (°)')
+ax.set_ylabel('Intensidad (u.a.)')
 
-picos_M5 = list(zip(peaks_M5, dostheta_M5[peaks_M5], intensity_M5[peaks_M5]))
 print('M5',f'{len(peaks_M5)} picos detectados\n')
 print('indx |  2θ (°) | Intensidad')
 for i,theta,intens in picos_M5:
@@ -801,19 +839,24 @@ peaks_M6, props_M6 = find_peaks(intensity_M6,
                                 prominence=15,
                                 width=3,
                                 distance=20)
+picos_M6 = list(zip(peaks_M6, dostheta_M6[peaks_M6], intensity_M6[peaks_M6]))
 
-fig_6a,ax=plt.subplots(figsize=(9,5), constrained_layout=True,sharex=True)
+fig_M6a,ax=plt.subplots(figsize=(9,5), constrained_layout=True,sharex=True)
 ax.plot(dostheta_M6, intensity_M6,'-', label='raw')
 ax.plot(dostheta_M6[peaks_M6], intensity_M6[peaks_M6], 'r.', label='peaks')
+for i, theta, intens in picos_M6:
+    ax.annotate(f'{theta:.2f}°', (theta, intens),
+                xytext=(0,5), textcoords='offset points',
+                ha='center', va='bottom', rotation=0, fontsize=8)
 
 ax.set_xlim(20,80)
+ax.set_title('M6 - Difractograma de RX')
 ax.set_ylim(0,)
 ax.grid()
 ax.legend()
 ax.set_xlabel('2θ (°)')
-plt.show()
+ax.set_ylabel('Intensidad (u.a.)')
 
-picos_M6 = list(zip(peaks_M6, dostheta_M6[peaks_M6], intensity_M6[peaks_M6]))
 print('M6',f'{len(peaks_M6)} picos detectados\n')
 print('indx |  2θ (°) | Intensidad')
 for i,theta,intens in picos_M6:
@@ -827,19 +870,24 @@ peaks_M7, props_M7 = find_peaks(intensity_M7,
                                 prominence=20,
                                 width=7,
                                 distance=20)
+picos_M7 = list(zip(peaks_M7, dostheta_M7[peaks_M7], intensity_M7[peaks_M7]))
 
-fig_7a,ax=plt.subplots(figsize=(9,5), constrained_layout=True,sharex=True)
+fig_M7a,ax=plt.subplots(figsize=(9,5), constrained_layout=True,sharex=True)
 ax.plot(dostheta_M7, intensity_M7,'-', label='raw')
 ax.plot(dostheta_M7[peaks_M7], intensity_M7[peaks_M7], 'r.', label='peaks')
+for i, theta, intens in picos_M7:
+    ax.annotate(f'{theta:.2f}°', (theta, intens),
+                xytext=(0,5), textcoords='offset points',
+                ha='center', va='bottom', rotation=0, fontsize=8)
 
 ax.set_xlim(20,80)
+ax.set_title('M7 - Difractograma de RX')
 ax.set_ylim(0,)
 ax.grid()
 ax.legend()
 ax.set_xlabel('2θ (°)')
-plt.show()
+ax.set_ylabel('Intensidad (u.a.)')
 
-picos_M7 = list(zip(peaks_M7, dostheta_M7[peaks_M7], intensity_M7[peaks_M7]))
 print('M7',f'{len(peaks_M7)} picos detectados\n')
 print('indx |  2θ (°) | Intensidad')
 for i,theta,intens in picos_M7:
@@ -855,18 +903,24 @@ peaks_M9, props_M9 = find_peaks(intensity_M9,
                                 prominence=10,
                                 width=3,
                                 distance=10)
+picos_M9 = list(zip(peaks_M9, dostheta_M9[peaks_M9], intensity_M9[peaks_M9]))
 
-fig_9a,ax=plt.subplots(figsize=(9,5), constrained_layout=True,sharex=True)
+fig_M9a,ax=plt.subplots(figsize=(9,5), constrained_layout=True,sharex=True)
 ax.plot(dostheta_M9, intensity_M9,'-', label='raw')
 ax.plot(dostheta_M9[peaks_M9], intensity_M9[peaks_M9], 'r.', label='peaks')
+for i, theta, intens in picos_M9:
+    ax.annotate(f'{theta:.2f}°', (theta, intens),
+                xytext=(0,5), textcoords='offset points',
+                ha='center', va='bottom', rotation=0, fontsize=8)
 
 ax.set_xlim(20,80)
+ax.set_title('M9 - Difractograma de RX')
 ax.set_ylim(0,)
 ax.grid()
-ax.legend(title='M9',frameon=True,shadow=True)
-plt.show()
+ax.legend()
+ax.set_xlabel('2θ (°)')
+ax.set_ylabel('Intensidad (u.a.)')
 
-picos_M9 = list(zip(peaks_M9, dostheta_M9[peaks_M9], intensity_M9[peaks_M9]))
 print('M9',f'{len(peaks_M9)} picos detectados\n')
 print('indx |  2θ (°) | Intensidad')
 for i,theta,intens in picos_M9:
@@ -880,25 +934,31 @@ peaks_M10, props_M10 = find_peaks(intensity_M10,
                                 prominence=17,
                                 width=2,
                                 distance=15)
+picos_M10 = list(zip(peaks_M10, dostheta_M10[peaks_M10], intensity_M10[peaks_M10]))
 
-fig_10a,ax=plt.subplots(figsize=(9,5), constrained_layout=True,sharex=True)
+fig_M10a,ax=plt.subplots(figsize=(9,5), constrained_layout=True,sharex=True)
 ax.plot(dostheta_M10, intensity_M10,'-', label='raw')
 ax.plot(dostheta_M10[peaks_M10], intensity_M10[peaks_M10], 'r.', label='peaks')
+for i, theta, intens in picos_M10:
+    ax.annotate(f'{theta:.2f}°', (theta, intens),
+                xytext=(0,5), textcoords='offset points',
+                ha='center', va='bottom', rotation=0, fontsize=8)
 
 ax.set_xlim(20,80)
+ax.set_title('M10 - Difractograma de RX')
 ax.set_ylim(0,)
 ax.grid()
-ax.legend(title='M10',frameon=True,shadow=True)
-plt.show()
+ax.legend()
+ax.set_xlabel('2θ (°)')
+ax.set_ylabel('Intensidad (u.a.)')
 
-picos_M10 = list(zip(peaks_M10, dostheta_M10[peaks_M10], intensity_M10[peaks_M10]))
 print('M10',f'{len(peaks_M10)} picos detectados\n')
 print('indx |  2θ (°) | Intensidad')
 for i,theta,intens in picos_M10:
     print(f'{i:4} | {theta:7.2f} | {intens:7.0f}')    
 
 #M10 - Análisis de Scherrer
-tabla_M10, resumen_M10_sin, resumen_M10_con, picos_M10, fig_M10b,fig_M10c_ = analizar_muestra(
+tabla_M10, resumen_M10_sin, resumen_M10_con, picos_M10, fig_M10b,fig_M10c = analizar_muestra(
     'M10', dostheta_M10, intensity_M10, picos_M10)
 
 #%%  M11
@@ -908,21 +968,25 @@ peaks_M11, props_M11 = find_peaks(intensity_M11,
                                 width=4,
                                 distance=20)
 
-# peaks_M11=peaks_M11[:-1]
+picos_M11 = list(zip(peaks_M11, dostheta_M11[peaks_M11], intensity_M11[peaks_M11]))
 
 fig_M11a,ax=plt.subplots(figsize=(9,5), constrained_layout=True,sharex=True)
 ax.plot(dostheta_M11, intensity_M11,'-', label='raw')
 ax.plot(dostheta_M11[peaks_M11], intensity_M11[peaks_M11], 'r.', label='peaks')
+for i, theta, intens in picos_M11:
+    ax.annotate(f'{theta:.2f}°', (theta, intens),
+                xytext=(0,5), textcoords='offset points',
+                ha='center', va='bottom', rotation=0, fontsize=8)
 
 ax.set_xlim(20,80)
-ax.set_ylim(0,360)
+ax.set_title('M11 - Difractograma de RX')
+ax.set_ylim(0,)
 ax.grid()
 ax.legend()
 ax.set_xlabel('2θ (°)')
-plt.show()
+ax.set_ylabel('Intensidad (u.a.)')
 
 
-picos_M11 = list(zip(peaks_M11, dostheta_M11[peaks_M11], intensity_M11[peaks_M11]))
 print('M11',f'{len(peaks_M11)} picos detectados\n')
 print('indx |  2θ (°) | Intensidad')
 for i,theta,intens in picos_M11:
@@ -932,19 +996,23 @@ tabla_M11, resumen_M11_sin, resumen_M11_con, picos_M11, fig_M11b,fig_M11c = anal
     'M11', dostheta_M11, intensity_M11, picos_M11[:-1])
 #%% M12 
 peaks_M12, props_M12 = find_peaks(intensity_M12,prominence=25,width=2,distance=50)
+picos_M12 = list(zip(peaks_M12, dostheta_M12[peaks_M12], intensity_M12[peaks_M12]))
 
-fig_12a,ax=plt.subplots(figsize=(9,5), constrained_layout=True,sharex=True)
+fig_M12a,ax=plt.subplots(figsize=(9,5), constrained_layout=True,sharex=True)
 ax.plot(dostheta_M12, intensity_M12,'-', label='raw')
 ax.plot(dostheta_M12[peaks_M12], intensity_M12[peaks_M12], 'r.', label='peaks')
+for i, theta, intens in picos_M12:
+    ax.annotate(f'{theta:.2f}°', (theta, intens),
+                xytext=(0,5), textcoords='offset points',
+                ha='center', va='bottom', rotation=0, fontsize=8)
 
 ax.set_xlim(20,80)
+ax.set_title('M12 - Difractograma de RX')
 ax.set_ylim(0,)
 ax.grid()
 ax.legend()
 ax.set_xlabel('2θ (°)')
-plt.show()
-
-picos_M12 = list(zip(peaks_M12, dostheta_M12[peaks_M12], intensity_M12[peaks_M12]))
+ax.set_ylabel('Intensidad (u.a.)')
 print('M12',f'{len(peaks_M12)} picos detectados\n')
 print('indx |  2θ (°) | Intensidad')
 for i,theta,intens in picos_M12:
@@ -954,11 +1022,87 @@ for i,theta,intens in picos_M12:
 tabla_M12, resumen_M12_sin, resumen_M12_con, picos_M12, fig_M12b,fig_M12c = analizar_muestra(
     'M12', dostheta_M12, intensity_M12, picos_M12)
 
-
-
 # %% salvo todas las figuras
+fig_LaB6a.savefig('LaB6_DRX',dpi=300)
+fig_LaB6b.savefig('LaB6_DRX_c_picos',dpi=300)
+fig_LaB6c.savefig('LaB6_perfil_exp',dpi=300)
 
 fig_all.savefig('DRX_M1_M2_M3_M4_M5_M6_M7_M9_M10_M11_M12.png')
-fig_M1a.savefig(,dpi=300)
-fig_M1b.savefig(,dpi=300)
-fig_M1c.savefig(,dpi=300)
+fig_M1a.savefig('M1_DRX',dpi=300)
+fig_M1b.savefig('M1_DRX_c_ajustes',dpi=300)
+fig_M1c.savefig('M1_tamaño_cristalita',dpi=300)
+
+fig_M2a.savefig('M2_DRX',dpi=300)
+fig_M2b.savefig('M2_DRX_c_ajustes',dpi=300)
+fig_M2c.savefig('M2_tamaño_cristalita',dpi=300)
+
+fig_M3a.savefig('M3_DRX',dpi=300)
+fig_M3b.savefig('M3_DRX_c_ajustes',dpi=300)
+fig_M3c.savefig('M3_tamaño_cristalita',dpi=300)
+
+fig_M4a.savefig('M4_DRX',dpi=300)
+fig_M4b.savefig('M4_DRX_c_ajustes',dpi=300)
+fig_M4c.savefig('M4_tamaño_cristalita',dpi=300)
+
+fig_M5a.savefig('M5_DRX',dpi=300)
+fig_M5b.savefig('M5_DRX_c_ajustes',dpi=300)
+fig_M5c.savefig('M5_tamaño_cristalita',dpi=300)
+
+fig_M6a.savefig('M6_DRX',dpi=300)
+fig_M6b.savefig('M6_DRX_c_ajustes',dpi=300)
+fig_M6c.savefig('M6_tamaño_cristalita',dpi=300)
+
+fig_M7a.savefig('M7_DRX',dpi=300)
+fig_M7b.savefig('M7_DRX_c_ajustes',dpi=300)
+fig_M7c.savefig('M7_tamaño_cristalita',dpi=300)
+
+fig_M9a.savefig('M9_DRX',dpi=300)
+fig_M9b.savefig('M9_DRX_c_ajustes',dpi=300)
+fig_M9c.savefig('M9_tamaño_cristalita',dpi=300)
+
+fig_M10a.savefig('M10_DRX',dpi=300)
+fig_M10b.savefig('M10_DRX_c_ajustes',dpi=300)
+fig_M10c.savefig('M10_tamaño_cristalita',dpi=300)
+
+fig_M11a.savefig('M11_DRX',dpi=300)
+fig_M11b.savefig('M11_DRX_c_ajustes',dpi=300)
+fig_M11c.savefig('M11_tamaño_cristalita',dpi=300)
+
+fig_M12a.savefig('M12_DRX',dpi=300)
+fig_M12b.savefig('M12_DRX_c_ajustes',dpi=300)
+fig_M12c.savefig('M12_tamaño_cristalita',dpi=300)
+# %%
+#%% Tamaño medio de cristalita por muestra
+muestras = ['M1','M2','M3','M4','M5','M6','M7','M9','M10','M11','M12']
+
+resumenes_sin = [resumen_M1_sin,resumen_M2_sin,resumen_M3_sin,resumen_M4_sin,
+                 resumen_M5_sin,resumen_M6_sin,resumen_M7_sin,resumen_M9_sin,
+                 resumen_M10_sin,resumen_M11_sin,resumen_M12_sin]
+resumenes_con = [resumen_M1_con,resumen_M2_con,resumen_M3_con,resumen_M4_con,
+                 resumen_M5_con,resumen_M6_con,resumen_M7_con,resumen_M9_con,
+                 resumen_M10_con,resumen_M11_con,resumen_M12_con]
+
+D_sin = np.array([r['D medio (nm)'] for r in resumenes_sin])
+std_sin = np.array([r['Desviación estándar (nm)'] for r in resumenes_sin])
+D_con = np.array([r['D medio (nm)'] for r in resumenes_con])
+std_con = np.array([r['Desviación estándar (nm)'] for r in resumenes_con])
+
+x = np.arange(len(muestras))
+fig_DRX_resumen, ax = plt.subplots(figsize=(11,5), constrained_layout=True)
+
+ax.errorbar(x-0.08,D_sin,yerr=std_sin,fmt='o',capsize=4,
+            lw=1.2,ms=6,label='Sin corrección instrumental')
+ax.errorbar(x+0.08,D_con,yerr=std_con,fmt='s',capsize=4,
+            lw=1.2,ms=6,label='Con corrección LaB$_6$')
+
+ax.set_xticks(x)
+ax.set_xticklabels(muestras)
+ax.set_xlabel('Muestra')
+ax.set_ylabel('Tamaño medio de cristalita, $D$ (nm)')
+ax.set_title('Tamaño medio de cristalita por DRX')
+ax.set_ylim(0,None)
+ax.grid(axis='y',alpha=0.3)
+ax.legend()
+plt.savefig('tamaño_vs_muestra.png',dpi=300)
+plt.show()
+# %%

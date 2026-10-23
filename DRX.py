@@ -1087,13 +1087,90 @@ std_sin = np.array([r['Desviación estándar (nm)'] for r in resumenes_sin])
 D_con = np.array([r['D medio (nm)'] for r in resumenes_con])
 std_con = np.array([r['Desviación estándar (nm)'] for r in resumenes_con])
 
-x = np.arange(len(muestras))
+
+#%% Promedio conjunto del tamaño de cristalita por grupos de muestras
+resumenes_sin = {
+    'M1': resumen_M1_sin, 'M2': resumen_M2_sin, 'M3': resumen_M3_sin,
+    'M4': resumen_M4_sin, 'M5': resumen_M5_sin, 'M6': resumen_M6_sin,
+    'M7': resumen_M7_sin, 'M9': resumen_M9_sin, 'M10': resumen_M10_sin,
+    'M11': resumen_M11_sin, 'M12': resumen_M12_sin
+}
+resumenes_con = {
+    'M1': resumen_M1_con, 'M2': resumen_M2_con, 'M3': resumen_M3_con,
+    'M4': resumen_M4_con, 'M5': resumen_M5_con, 'M6': resumen_M6_con,
+    'M7': resumen_M7_con, 'M9': resumen_M9_con, 'M10': resumen_M10_con,
+    'M11': resumen_M11_con, 'M12': resumen_M12_con
+}
+
+grupos = {
+    'M1-M10': ['M1','M2','M3','M4','M5','M6','M7','M9','M10'],
+    'M11-M12': ['M11','M12']
+}
+
+def promedio_grupo(nombres, resumenes):
+    D = np.array([resumenes[m]['D medio (nm)'] for m in nombres], dtype=float)
+    err = np.array([resumenes[m]['Incertidumbre (nm)'] for m in nombres], dtype=float)
+    validos = np.isfinite(D) & np.isfinite(err) & (err > 0) & (D > 0)
+    D, err = D[validos], err[validos]
+    if len(D) < 2:
+        raise ValueError('Se necesitan al menos dos muestras válidas')
+    pesos = 1/err**2
+    D_medio = np.sum(pesos*D)/np.sum(pesos)
+    err_estadistico = np.sqrt(1/np.sum(pesos))
+    chi2_red = np.sum(((D-D_medio)/err)**2)/(len(D)-1)
+    err_final = err_estadistico*np.sqrt(max(chi2_red, 1))
+    return {
+        'D medio (nm)': D_medio,
+        'Incertidumbre (nm)': err_final,
+        'Error ponderado sin inflar (nm)': err_estadistico,
+        'Desv. estándar entre muestras (nm)': np.std(D, ddof=1),
+        'chi2 reducido': chi2_red,
+        'N muestras': len(D)
+    }
+
+resultados_grupos = []
+for nombre_grupo, nombres in grupos.items():
+    for correccion, resumenes in [('Sin corrección', resumenes_sin),
+                                  ('Con corrección LaB6', resumenes_con)]:
+        r = promedio_grupo(nombres, resumenes)
+        resultados_grupos.append({
+            'Grupo': nombre_grupo,
+            'Corrección': correccion,
+            **r
+        })
+
+tabla_grupos = pd.DataFrame(resultados_grupos)
+display(tabla_grupos.round(2))
+# %%
+
 fig_DRX_resumen, ax = plt.subplots(figsize=(11,5), constrained_layout=True)
+x = np.arange(len(muestras))
+
+media_sin, desv_sin = np.mean(D_sin[:-2]), np.std(D_sin[:-2],ddof=1)
+media_con, desv_con = np.mean(D_con[:-2]), np.std(D_con[:-2],ddof=1)
+
+media2_sin, desv2_sin = np.mean(D_sin[-2:]), np.std(D_sin[-2:],ddof=1)
+media2_con, desv2_con = np.mean(D_con[-2:]), np.std(D_con[-2:],ddof=1)
 
 ax.errorbar(x-0.08,D_sin,yerr=std_sin,fmt='o',capsize=4,
             lw=1.2,ms=6,label='Sin corrección instrumental')
 ax.errorbar(x+0.08,D_con,yerr=std_con,fmt='s',capsize=4,
             lw=1.2,ms=6,label='Con corrección LaB$_6$')
+
+ax.axhspan(media_sin-desv_sin,media_sin+desv_sin,color='C0',alpha=0.2)
+ax.axhline(media_sin,color='C0',ls='--',lw=1.5, label=f'Sin corrección: {media_sin:.1f} ± {desv_sin:.1f} nm')
+
+ax.axhspan(media_con-desv_con,media_con+desv_con,color='C1',alpha=0.2)
+ax.axhline(media_con,color='C1',ls='--',lw=1.5,label=f'Con corrección LaB$_6$: {media_con:.1f} ± {desv_con:.1f} nm')
+
+ax.axhspan(media2_sin-desv_sin,media2_sin+desv_sin,color='C0',alpha=0.2)
+ax.axhline(media2_sin,color='C0',ls='-.',lw=1.5,
+           label=f'Sin corrección: {media2_sin:.1f} ± {desv_sin:.1f} nm')
+
+ax.axhspan(media2_con-desv_con,media2_con+desv_con,color='C1',alpha=0.2)
+ax.axhline(media2_con,color='C1',ls='-.',lw=1.5,
+           label=f'Con corrección LaB$_6$: {media2_con:.1f} ± {desv_con:.1f} nm')
+
 
 ax.set_xticks(x)
 ax.set_xticklabels(muestras)
@@ -1102,7 +1179,7 @@ ax.set_ylabel('Tamaño medio de cristalita, $D$ (nm)')
 ax.set_title('Tamaño medio de cristalita por DRX')
 ax.set_ylim(0,None)
 ax.grid(axis='y',alpha=0.3)
-ax.legend()
+ax.legend(ncol=3)
 plt.savefig('tamaño_vs_muestra.png',dpi=300)
 plt.show()
 # %%

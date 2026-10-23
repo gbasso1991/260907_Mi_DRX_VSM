@@ -1026,7 +1026,7 @@ tabla_M12, resumen_M12_sin, resumen_M12_con, picos_M12, fig_M12b,fig_M12c = anal
 fig_LaB6a.savefig('LaB6_DRX',dpi=300)
 fig_LaB6b.savefig('LaB6_DRX_c_picos',dpi=300)
 fig_LaB6c.savefig('LaB6_perfil_exp',dpi=300)
-
+fig_Lab6_perfil.savefig('LaB6_perfil',dpi=300)
 fig_all.savefig('DRX_M1_M2_M3_M4_M5_M6_M7_M9_M10_M11_M12.png')
 fig_M1a.savefig('M1_DRX',dpi=300)
 fig_M1b.savefig('M1_DRX_c_ajustes',dpi=300)

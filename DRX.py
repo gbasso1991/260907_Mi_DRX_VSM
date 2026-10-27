@@ -14,7 +14,100 @@ from lmfit.models import GaussianModel
 from scipy.signal import find_peaks
 from scipy.signal import savgol_filter
 from scipy.ndimage import minimum_filter, gaussian_filter
+#%%%
+#%% Williamson-Hall ponderado por incertidumbre del FWHM
+def williamson_hall(tabla, nombre, columna_fwhm='FWHM con (°)',
+                    columna_err='Error FWHM con (°)'):
+    columnas = ['Reflexión', '2theta (°)', columna_fwhm, columna_err]
+    datos = tabla[columnas].replace([np.inf, -np.inf], np.nan).dropna()
+    datos = datos[
+        (datos[columna_fwhm] > 0) &
+        (datos[columna_err] > 0)
+    ].copy()
 
+    if len(datos) < 3:
+        raise ValueError(f'{nombre}: se necesitan al menos 3 reflexiones válidas con incertidumbres')
+
+    theta = np.deg2rad(datos['2theta (°)'].to_numpy()/2)
+    beta = np.deg2rad(datos[columna_fwhm].to_numpy())
+    sigma_beta = np.deg2rad(datos[columna_err].to_numpy())
+
+    x = 4*np.sin(theta)
+    y = beta*np.cos(theta)
+    sigma_y = sigma_beta*np.cos(theta)
+
+    validos = np.isfinite(x) & np.isfinite(y) & np.isfinite(sigma_y) & (sigma_y > 0)
+    x, y, sigma_y = x[validos], y[validos], sigma_y[validos]
+    datos = datos.iloc[np.flatnonzero(validos)]
+
+    if len(datos) < 3:
+        raise ValueError(f'{nombre}: quedan menos de 3 reflexiones válidas')
+
+    def recta(x, pendiente, ordenada):
+        return pendiente*x + ordenada
+
+    parametros, cov = curve_fit(
+        recta, x, y,
+        sigma=sigma_y,
+        absolute_sigma=True
+    )
+    pendiente, ordenada = parametros
+    err_pendiente, err_ordenada = np.sqrt(np.maximum(np.diag(cov), 0))
+
+    y_fit = recta(x, pendiente, ordenada)
+    chi2_red = np.sum(((y-y_fit)/sigma_y)**2)/(len(y)-2)
+    R2 = 1-np.sum((y-y_fit)**2)/np.sum((y-np.mean(y))**2)
+
+    lambda_nm = lambda_X/10
+    if ordenada > 0:
+        D = K*lambda_nm/ordenada
+        err_D = abs(K*lambda_nm/ordenada**2)*err_ordenada
+    else:
+        D, err_D = np.nan, np.nan
+        print(f'Advertencia: {nombre}, ordenada al origen no positiva.')
+
+    epsilon = pendiente
+    err_epsilon = err_pendiente
+
+    print(f'{nombre} - Williamson-Hall ponderado ({columna_fwhm})')
+    print(f'D = {D:.2f} ± {err_D:.2f} nm')
+    print(f'Microdeformación ε = {epsilon:.3e} ± {err_epsilon:.3e}')
+    print(f'Ordenada al origen = {ordenada:.5e} ± {err_ordenada:.2e}')
+    print(f'χ² reducido = {chi2_red:.3f}')
+    print(f'R² = {R2:.4f}')
+    print(f'N reflexiones = {len(datos)}')
+
+    fig, ax = plt.subplots(figsize=(7,5), constrained_layout=True)
+    ax.errorbar(x, y, yerr=sigma_y, fmt='o', capsize=3, ms=6,
+                label='Reflexiones')
+    xfit = np.linspace(x.min(), x.max(), 200)
+    ax.plot(xfit, recta(xfit, *parametros), '-',
+            label=f'Ajuste ponderado: $R^2$ = {R2:.3f}')
+    for xi, yi, (_, fila) in zip(x, y, datos.iterrows()):
+        ax.annotate(fila['Reflexión'], (xi, yi),
+                    xytext=(4,4), textcoords='offset points', fontsize=8)
+
+    ax.set_xlabel(r'$4\sin\theta$')
+    ax.set_ylabel(r'$\beta\cos\theta$ (rad)')
+    ax.set_title(f'{nombre}: Williamson-Hall ponderado')
+    ax.grid(alpha=0.3)
+    ax.legend()
+    plt.show()
+
+    return {
+        'Muestra': nombre,
+        'FWHM utilizado': columna_fwhm,
+        'Incertidumbre FWHM': columna_err,
+        'D (nm)': D,
+        'Error D (nm)': err_D,
+        'Microdeformación': epsilon,
+        'Error microdeformación': err_epsilon,
+        'Ordenada': ordenada,
+        'Error ordenada': err_ordenada,
+        'chi2 reducido': chi2_red,
+        'R²': R2,
+        'N reflexiones': len(datos)
+    }
 #%%pvoigt_fondo
 def pvoigt_fondo(x, A, xc, fwhm, eta, b0, b1):
     """
@@ -244,27 +337,31 @@ def analizar_muestra(nombre, dostheta, intensity, picos_detectados):
             D_sin = K*lambda_X/(beta_sin*np.cos(theta_rad))/10
             D_con = K*lambda_X/(beta_con*np.cos(theta_rad))/10 if beta_con > 0 else np.nan
 
-            # Incertidumbres aproximadas del ajuste
-            fwhm_err_deg = np.sqrt(max(pcov[2,2], 0))
-            beta_err = np.deg2rad(fwhm_err_deg)
-            D_err_sin = D_sin*beta_err/beta_sin
+            # Incertidumbres del FWHM y propagación a Scherrer
+            fwhm_err_sin = np.sqrt(max(pcov[2,2], 0))
 
-            fwhm_err_corr_deg = np.sqrt(max(pcov_corr[2,2], 0))
-            beta_err_corr = np.deg2rad(fwhm_err_corr_deg)
-            D_err_con = D_con*beta_err_corr/beta_con if beta_con > 0 else np.nan
+            fwhm_err_con = incertidumbre_fwhm_corregido_mc(
+                popt_corr, pcov_corr, df_LaB6,
+                K=K, lambda_X=lambda_X, D_LaB6=800, n_mc=5000
+            )
 
+            D_err_sin = D_sin*fwhm_err_sin/fwhm_sin if fwhm_sin > 0 else np.nan
+            D_err_con = D_con*fwhm_err_con/fwhm_con if fwhm_con > 0 and np.isfinite(fwhm_err_con) else np.nan
+            
             resultados.append({
                 'Reflexión': hkl,
                 '2theta teo (°)': centro_ref,
                 '2theta (°)': xc,
                 'FWHM sin (°)': fwhm_sin,
+                'Error FWHM sin (°)': fwhm_err_sin,
                 'FWHM con (°)': fwhm_con,
+                'Error FWHM con (°)': fwhm_err_con,
                 'eta': eta,
                 'D sin (nm)': D_sin,
                 'Error sin (nm)': D_err_sin,
                 'D con (nm)': D_con,
                 'Error con (nm)': D_err_con
-            })
+                        })
 
             xfit = np.linspace(xp.min(), xp.max(), 300)
             ax.plot(xfit, pvoigt_fondo(xfit, *popt), lw=1.2,
@@ -542,10 +639,11 @@ for hkl, N, centro_ref in reflexiones_LaB6:
             'FWHM Ka1 (°)': fwhm,
             'Error FWHM (°)': err_fwhm,
             'eta': eta,
+            'Error eta': errores[3],
             'a (Å)': a,
             'Error centro (°)': err_xc,
             'Error a (Å)': err_a})
-
+        
         ajustes_LaB6[hkl] = (xp, yp, popt)
 
     except (RuntimeError, ValueError) as e:
@@ -553,7 +651,134 @@ for hkl, N, centro_ref in reflexiones_LaB6:
 
 df_LaB6 = pd.DataFrame(resultados_LaB6)
 display(df_LaB6.round(6))
+#%%
+#%% Incertidumbre del FWHM corregido por Monte Carlo
+def incertidumbre_fwhm_corregido_mc(popt, pcov, df_LaB6,
+                                    K=0.9, lambda_X=1.5406,
+                                    D_LaB6=800, n_mc=10000, seed=None):
+    """
+    Estima por Monte Carlo la incertidumbre del FWHM corregido por
+    ensanchamiento instrumental mediante la calibración con LaB6.
 
+    Genera realizaciones aleatorias de los parámetros del ajuste de la
+    muestra a partir de su matriz de covarianza. Para cada realización,
+    interpola el FWHM y la fracción lorentziana de la calibración
+    instrumental, muestrea sus incertidumbres y aplica la misma
+    corrección aproximada utilizada en analizar_pico().
+
+    La incertidumbre del FWHM corregido se estima como la desviación
+    estándar muestral de los anchos corregidos obtenidos en las
+    realizaciones válidas.
+
+    Parámetros
+    ----------
+    popt : array_like
+        Parámetros ajustados del perfil pseudo-Voigt de la muestra,
+        en el orden [A, xc, fwhm, eta, b0, b1].
+    pcov : ndarray
+        Matriz de covarianza de los parámetros ajustados.
+    df_LaB6 : pandas.DataFrame
+        Tabla de calibración instrumental. Debe contener las columnas
+        '2theta Ka1 (°)', 'FWHM Ka1 (°)', 'Error FWHM (°)', 'eta' y,
+        opcionalmente, 'Error eta'.
+    K : float
+        Factor de forma de Scherrer.
+    lambda_X : float
+        Longitud de onda de rayos X, en Å.
+    D_LaB6 : float
+        Tamaño de dominio de referencia de LaB6, en nm.
+    n_mc : int
+        Número de realizaciones Monte Carlo.
+    seed : int or None
+        Semilla del generador aleatorio para reproducibilidad.
+
+    Retorna
+    -------
+    float
+        Desviación estándar de los FWHM corregidos, en grados de 2theta.
+        Devuelve np.nan si hay insuficientes realizaciones válidas.
+
+    Limitaciones
+    ------------
+    La propagación supone parámetros aproximadamente gaussianos y trata
+    como independientes las incertidumbres interpoladas del FWHM y eta
+    instrumentales. No incorpora las covarianzas de los parámetros de
+    calibración ni las incertidumbres sistemáticas de la corrección.
+    """
+    rng = np.random.default_rng(seed)
+
+    cov = np.asarray(pcov, dtype=float)
+    if not np.all(np.isfinite(cov)):
+        return np.nan
+
+    cov = (cov+cov.T)/2
+    valores, vectores = np.linalg.eigh(cov)
+    raiz_cov = vectores @ np.diag(np.sqrt(np.maximum(valores, 0)))
+
+    draws = np.asarray(popt) + rng.standard_normal((n_mc, len(popt))) @ raiz_cov.T
+    xc, fwhm, eta_muestra = draws[:,1], draws[:,2], draws[:,3]
+
+    df_cal = df_LaB6.sort_values('2theta Ka1 (°)')
+    x_cal = df_cal['2theta Ka1 (°)'].to_numpy()
+    beta_cal = df_cal['FWHM Ka1 (°)'].to_numpy()
+    err_beta_cal = df_cal['Error FWHM (°)'].to_numpy()
+    eta_cal = df_cal['eta'].to_numpy()
+    err_eta_cal = df_cal['Error eta'].to_numpy() if 'Error eta' in df_cal else np.zeros(len(df_cal))
+
+    # Conservar simulaciones dentro del intervalo angular calibrado
+    validos = (
+        (xc >= x_cal.min()) & (xc <= x_cal.max()) &
+        (fwhm > 0) & (eta_muestra >= 0) & (eta_muestra <= 1)
+    )
+    xc, fwhm, eta_muestra = xc[validos], fwhm[validos], eta_muestra[validos]
+
+    if len(xc) < 100:
+        return np.nan
+
+    # Interpolación de las contribuciones instrumentales y sus incertidumbres
+    idx = np.clip(np.searchsorted(x_cal, xc), 1, len(x_cal)-1)
+    x0, x1 = x_cal[idx-1], x_cal[idx]
+    w = (xc-x0)/(x1-x0)
+
+    beta_inst = (1-w)*beta_cal[idx-1] + w*beta_cal[idx]
+    err_beta_inst = np.sqrt(
+        ((1-w)*err_beta_cal[idx-1])**2 +
+        (w*err_beta_cal[idx])**2
+    )
+    beta_inst = rng.normal(beta_inst, err_beta_inst)
+
+    eta_inst = (1-w)*eta_cal[idx-1] + w*eta_cal[idx]
+    err_eta_inst = np.sqrt(
+        ((1-w)*err_eta_cal[idx-1])**2 +
+        (w*err_eta_cal[idx])**2
+    )
+    eta_inst = np.clip(rng.normal(eta_inst, err_eta_inst), 0, 1)
+    beta_inst = np.maximum(beta_inst, 0)
+
+    theta = np.deg2rad(xc/2)
+    beta_LaB6_intr = np.rad2deg(
+        K*(lambda_X/(D_LaB6*10))/np.cos(theta)
+    )
+
+    beta_G_inst = beta_inst*np.sqrt(1-eta_inst)
+    beta_L_inst = np.maximum(beta_inst*eta_inst-beta_LaB6_intr, 0)
+
+    beta_G_muestra = fwhm*np.sqrt(1-eta_muestra)
+    beta_L_muestra = fwhm*eta_muestra
+
+    beta_G_corr = np.sqrt(np.maximum(beta_G_muestra**2-beta_G_inst**2, 0))
+    beta_L_corr = np.maximum(beta_L_muestra-beta_L_inst, 0)
+
+    fwhm_corr = (
+        0.5346*beta_L_corr +
+        np.sqrt(0.2166*beta_L_corr**2+beta_G_corr**2)
+    )
+
+    fwhm_corr = fwhm_corr[np.isfinite(fwhm_corr)]
+    if len(fwhm_corr) < 100:
+        return np.nan
+
+    return np.std(fwhm_corr, ddof=1)
 #%% Gráficos de los ajustes del doblete
 fig_LaB6c, axs = plt.subplots(3, 4, figsize=(17, 10), constrained_layout=True)
 axs = axs.ravel()
@@ -597,7 +822,7 @@ ax.errorbar(
 ax.set_xlabel(r'$2\theta$ (°)')
 ax.set_ylabel('FWHM (°)')
 ax.set_title(r'Ancho del perfil de $K\alpha_1$ para LaB$_6$')
-ax.grid(alpha=0.3)
+ax.grid()
 ax.legend()
 ax.set_xlabel('2θ (°)')
 plt.show()
@@ -1182,4 +1407,19 @@ ax.grid(axis='y',alpha=0.3)
 ax.legend(ncol=3)
 plt.savefig('tamaño_vs_muestra.png',dpi=300)
 plt.show()
-# %%
+#%% Williamson-Hall para todas las muestras
+tablas_DRX = {
+    'M1': tabla_M1, 'M2': tabla_M2, 'M3': tabla_M3,
+    'M4': tabla_M4, 'M5': tabla_M5, 'M6': tabla_M6,
+    'M7': tabla_M7, 'M9': tabla_M9, 'M10': tabla_M10,
+    'M11': tabla_M11, 'M12': tabla_M12}
+
+resultados_WH_sin = {}
+resultados_WH_con = {}
+
+for nombre, tabla in tablas_DRX.items():
+    resultados_WH_sin[nombre] = williamson_hall(
+        tabla, nombre, 'FWHM sin (°)', 'Error FWHM sin (°)')
+    resultados_WH_con[nombre] = williamson_hall(
+        tabla, nombre, 'FWHM con (°)', 'Error FWHM con (°)')
+#%%

@@ -17,6 +17,8 @@ import chardet
 import re
 from scipy.interpolate import interp1d
 from clase_resultados import ResultadosESAR
+import pandas as pd
+
 pendiente_HvsI = 3716.3 # 1/m
 ordenada_HvsI = 1297.0 # A/m
 #%% Lector de resultados
@@ -211,8 +213,66 @@ def warming_rates_promedio(resultados):
         rates_promedio.append(ufloat(promedio, std))
 
     return rates_promedio
-#%% Importo ciclos y resultados  ordenado por temperatura
 
+#%%Campo magnético calculado a partir del nombre de cada archivo
+def campo_desde_archivo(archivo):
+    nombre_archivo = os.path.basename(archivo)
+    Idc = float(nombre_archivo.split('kHz_')[1].split('dA')[0])/10
+    return (Idc*pendiente_HvsI + ordenada_HvsI)/1000
+#%% Agrupar warming rates por campo
+def warming_rates_por_campo(res, campos):
+    grupos = {}
+    for r, H0 in zip(res, campos):
+        dt = r.time[-1] - r.time[0]
+        dT = r.temperatura[-1] - r.temperatura[0]
+        grupos.setdefault(round(H0, 3), []).append(dT/dt)
+
+    WR = {}
+    for campo, rates in grupos.items():
+        promedio = np.mean(rates)
+        std = np.std(rates, ddof=1) if len(rates) > 1 else 0.0
+        WR[campo] = ufloat(promedio, std)
+
+    return WR
+#%% funcion leer resultados Feret
+def leer_resultados_feret(archivo='Resultados_lognormal_Feret.txt'):
+    """
+    Lee la tabla de resultados del ajuste lognormal de los diámetros Feret.
+
+    Parameters
+    ----------
+    archivo : str, optional
+        Ruta al archivo de resultados, separado por tabulaciones.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Tabla con los resultados de cada muestra:
+        Muestra, N, Media, u(Media), Std, u(Std), Mediana, Moda,
+        shape y scale.
+    """
+    df = pd.read_csv(archivo, sep='\t')
+    return df
+
+#%% funcion leer resultados cristalita
+def leer_resultados_cristalita(archivo='Resultados_cristalitas_Scherrer.txt'):
+    """
+    Lee la tabla de resultados de tamaños de cristalita obtenidos mediante
+    la ecuación de Scherrer, con y sin corrección instrumental.
+
+    Parámetros
+    ----------
+    archivo : str
+        Ruta al archivo de resultados, separado por tabulaciones.
+
+    Retorna
+    -------
+    pd.DataFrame
+        Tabla con los tamaños de cristalita medios, sus incertidumbres
+        y la cantidad de reflexiones consideradas para cada muestra.
+    """
+    return pd.read_csv(archivo, sep='\t')
+#%% Importo ciclos y resultados  ordenado por temperatura
 
 nombres = ['M1','M2','M3','M4','M5','M6','M9','M10','M11','M12']
 concentracion = [5.7,19.8,48.1,13.0,23.0,20,19.6,24.5,5.2,9.9] # g/L Magnetita
@@ -237,7 +297,7 @@ resultados_M11 = glob("data_ESAR/M11/*resultados*")
 ciclos_M12 = glob("data_ESAR/M12/*ciclo_promedio_H_M*")
 resultados_M12 = glob("data_ESAR/M12/*resultados*")
 
-#%% Ordeno listas
+# Ordeno listas
 for c in [ciclos_M1, ciclos_M2, ciclos_M3, ciclos_M4, ciclos_M5, ciclos_M6, ciclos_M9, ciclos_M10, ciclos_M11, ciclos_M12]:
     c.sort()
     print(c)
@@ -290,7 +350,38 @@ ESAR_M11, tau_M11, Hc_M11 = extraer_ESAR_tau(resultados_M11)
 res_M11=[]
 ESAR_M12, tau_M12, Hc_M12 = extraer_ESAR_tau(resultados_M12)
 res_M12=[]
-#%%#%% Ploteo comparativo de ciclos de histéresis
+#%% Importar resultados ESAR y calcular warming rates
+
+nombres = ['M1', 'M2', 'M3', 'M4', 'M5', 'M6', 'M9', 'M10', 'M11', 'M12']
+concentracion = [5.7, 19.8, 48.1, 13.0, 23.0, 20.0, 19.6, 24.5, 5.2, 9.9] # g/L Magnetita
+
+ciclos = [ciclos_M1, ciclos_M2, ciclos_M3, ciclos_M4, ciclos_M5,
+          ciclos_M6, ciclos_M9, ciclos_M10, ciclos_M11, ciclos_M12]
+
+resultados = [resultados_M1, resultados_M2, resultados_M3, resultados_M4, resultados_M5,
+              resultados_M6, resultados_M9, resultados_M10, resultados_M11, resultados_M12]
+
+
+campos_resultados = [[campo_desde_archivo(r) for r in lista] for lista in resultados]
+
+# Crear objetos ResultadosESAR
+res_muestras = []
+for nombre, lista_resultados in zip(nombres, resultados):
+    print(f'Resultados {nombre}', '='*80, '\n')
+    res_muestras.append([ResultadosESAR(r) for r in lista_resultados])
+
+# Extraer ESAR, tau y Hc
+datos_ESAR_tau_Hc = [extraer_ESAR_tau(lista) for lista in resultados]
+ESAR = [datos[0] for datos in datos_ESAR_tau_Hc]
+tau = [datos[1] for datos in datos_ESAR_tau_Hc]
+Hc = [datos[2] for datos in datos_ESAR_tau_Hc]
+
+
+
+warming_rates = [warming_rates_por_campo(res, campos)
+                 for res, campos in zip(res_muestras, campos_resultados)]
+
+#%% Ploteo comparativo de ciclos de histéresis
 
 colores_campo = {20: 'C3', 29: 'C4', 38: 'C0', 47: 'C1', 57: 'C2'}
 
@@ -324,56 +415,7 @@ for ax in axs[:, 0]:
 plt.suptitle('Ciclos promedio normalizados por concentracion — 300 kHz', fontsize=14)
 plt.savefig('00_comparativa_ciclos_norm_all.png', dpi=300)
 
-#%% Importar resultados ESAR y calcular warming rates
 
-nombres = ['M1', 'M2', 'M3', 'M4', 'M5', 'M6', 'M9', 'M10', 'M11', 'M12']
-concentracion = [5.7, 19.8, 48.1, 13.0, 23.0, 20.0, 19.6, 24.5, 5.2, 9.9] # g/L Magnetita
-
-ciclos = [ciclos_M1, ciclos_M2, ciclos_M3, ciclos_M4, ciclos_M5,
-          ciclos_M6, ciclos_M9, ciclos_M10, ciclos_M11, ciclos_M12]
-
-resultados = [resultados_M1, resultados_M2, resultados_M3, resultados_M4, resultados_M5,
-              resultados_M6, resultados_M9, resultados_M10, resultados_M11, resultados_M12]
-
-# Campo magnético calculado a partir del nombre de cada archivo
-def campo_desde_archivo(archivo):
-    nombre_archivo = os.path.basename(archivo)
-    Idc = float(nombre_archivo.split('kHz_')[1].split('dA')[0])/10
-    return (Idc*pendiente_HvsI + ordenada_HvsI)/1000
-
-campos_resultados = [[campo_desde_archivo(r) for r in lista] for lista in resultados]
-
-# Crear objetos ResultadosESAR
-res_muestras = []
-for nombre, lista_resultados in zip(nombres, resultados):
-    print(f'Resultados {nombre}', '='*80, '\n')
-    res_muestras.append([ResultadosESAR(r) for r in lista_resultados])
-
-# Extraer ESAR, tau y Hc
-datos_ESAR_tau_Hc = [extraer_ESAR_tau(lista) for lista in resultados]
-ESAR = [datos[0] for datos in datos_ESAR_tau_Hc]
-tau = [datos[1] for datos in datos_ESAR_tau_Hc]
-Hc = [datos[2] for datos in datos_ESAR_tau_Hc]
-
-# Agrupar warming rates por campo
-def warming_rates_por_campo(res, campos):
-    grupos = {}
-    for r, H0 in zip(res, campos):
-        dt = r.time[-1] - r.time[0]
-        dT = r.temperatura[-1] - r.temperatura[0]
-        grupos.setdefault(round(H0, 3), []).append(dT/dt)
-
-    WR = {}
-    for campo, rates in grupos.items():
-        promedio = np.mean(rates)
-        std = np.std(rates, ddof=1) if len(rates) > 1 else 0.0
-        WR[campo] = ufloat(promedio, std)
-
-    return WR
-
-warming_rates = [warming_rates_por_campo(res, campos)
-                 for res, campos in zip(res_muestras, campos_resultados)]
-#%%
 #%% Templogs — todas las muestras
 
 colores_campo = {20: 'C3', 29: 'C4', 38: 'C0', 47: 'C1', 57: 'C2'}
@@ -415,7 +457,7 @@ plt.suptitle('Templogs — 300 kHz', fontsize=16)
 plt.savefig('01_templogs_all.png',dpi=300)
 plt.show()
 
-#%%
+
 #%% Ploteo comparativo de errorbars de ESAR, tau y Hc
 
 categorias = sorted({round(H0, 1) for lista in campos_resultados for H0 in lista})
@@ -466,261 +508,214 @@ plt.show()
 # fig01.savefig('01_metacomparativa_ciclos_normalizados.png',dpi=300)
 # fig02.savefig('02_metacomparativa_templogs.png',dpi=300)
 # fig03.savefig('03_metacomparativa_ESAR_Tau_Hc.png',dpi=300)
+#%% Importo resultados SEM
+resultados_feret = leer_resultados_feret('Resultados_lognormal_Feret.txt')
+print(resultados_feret)
+
+diametros_medios = resultados_feret['Media (nm)'].to_numpy()
+incertezas_diametros = resultados_feret['u(Media) (nm)'].to_numpy()
+
+diametros_medios = [ufloat(media, incerteza)
+    for media, incerteza in zip(resultados_feret['Media (nm)'],resultados_feret['u(Media) (nm)'])]
+#%% Importo resultados DRX
+df_cristalitas = leer_resultados_cristalita('Resultados_cristalitas_Scherrer.txt')
+print(df_cristalitas)
+muestras = df_cristalitas['Muestra'].to_numpy()
+D_sin = df_cristalitas['D sin corrección (nm)'].to_numpy()
+u_D_sin = df_cristalitas['u(D sin corrección) (nm)'].to_numpy()
+D_con = df_cristalitas['D con corrección (nm)'].to_numpy()
+u_D_con = df_cristalitas['u(D con corrección) (nm)'].to_numpy()
+
+
+#%% Preparar datos para ESAR vs diámetros
+
+nombres_ESAR = ['M1', 'M2', 'M3', 'M4', 'M5', 'M6', 'M9', 'M10', 'M11', 'M12']
+
+ESAR_max = []
+ESAR_max_std = []
+ESAR_max_n = []
+H_max_muestras = []
+
+for nombre, valores_ESAR, campos in zip(nombres_ESAR, ESAR, campos_resultados):
+    grupos = {}
+    for valor, H0 in zip(valores_ESAR, campos):
+        grupos.setdefault(round(H0, 1), []).append(valor)
+
+    H_max = max(grupos)
+    valores_max = grupos[H_max]
+    valores_nominales = np.array([s.n for s in valores_max])
+
+    ESAR_max.append(np.mean(valores_nominales))
+    ESAR_max_n.append(len(valores_max))
+    H_max_muestras.append(H_max)
+
+    if len(valores_max) > 1:
+        ESAR_max_std.append(np.std(valores_nominales, ddof=1))
+    else:
+        ESAR_max_std.append(valores_max[0].s)
+
+df_ESAR = pd.DataFrame({
+    'Muestra': nombres_ESAR,
+    'H máximo (kA/m)': H_max_muestras,
+    'N repeticiones': ESAR_max_n,
+    'ESAR (W/g)': ESAR_max,
+    'u(ESAR) (W/g)': ESAR_max_std
+})
+
+df_Feret = resultados_feret[
+    ['Muestra', 'Media (nm)', 'u(Media) (nm)']
+].rename(columns={
+    'Media (nm)': 'D_Feret (nm)',
+    'u(Media) (nm)': 'u(D_Feret) (nm)'
+})
+
+df_DRX = df_cristalitas[
+    ['Muestra', 'D con corrección (nm)', 'u(D con corrección) (nm)']
+].rename(columns={
+    'D con corrección (nm)': 'D cristalita (nm)',
+    'u(D con corrección) (nm)': 'u(D cristalita) (nm)'
+})
+
+df_comparacion = df_ESAR.merge(df_Feret, on='Muestra').merge(df_DRX, on='Muestra')
+
+print(df_comparacion)
 # %%
-#%% Medias y dispersiones vs temperatura de síntesis
+#%% ESAR a campo máximo vs diámetro Feret y tamaño de cristalita
 
-# Campos magnéticos y colores asociados
-campos = ['38 kA/m', '47 kA/m', '57 kA/m']
-colores_campo = ['C0', 'C1', 'C2']
+# Calcular el ESAR promedio a partir de todas las mediciones del campo máximo
+nombres_ESAR = nombres
+ESAR_max = []
+ESAR_max_std = []
+ESAR_max_n = []
+H_max_muestras = []
 
+for nombre, valores_ESAR, campos in zip(nombres_ESAR, ESAR, campos_resultados):
+    grupos = {}
+    for valor, H0 in zip(valores_ESAR, campos):
+        grupos.setdefault(round(H0, 1), []).append(valor)
 
-def media_error_repeticiones(datos):
-    '''
-    Calcula media y desviación estándar entre las 3 repeticiones
-    para parámetros con 9 valores por muestra (3 por campo)'''
+    H_max = max(grupos)
+    valores_max = grupos[H_max]
+    valores_nominales = np.array([s.n for s in valores_max])
 
-    medias = []
-    errores = []
+    ESAR_max.append(np.mean(valores_nominales))
+    ESAR_max_n.append(len(valores_max))
+    H_max_muestras.append(H_max)
 
-    for muestra in datos:
-        medias_muestra = []
-        errores_muestra = []
+    if len(valores_max) > 1:
+        ESAR_max_std.append(np.std(valores_nominales, ddof=1))
+    else:
+        # Con una sola medición no se puede estimar la dispersión entre repeticiones.
+        # Se conserva la incertidumbre propia del resultado individual.
+        ESAR_max_std.append(valores_max[0].s)
 
-        for i in range(0, 9, 3):
-            valores = np.array([s.n for s in muestra[i:i+3]])
+ESAR_max = np.array(ESAR_max)
+ESAR_max_std = np.array(ESAR_max_std)
+ESAR_max_n = np.array(ESAR_max_n)
+H_max_muestras = np.array(H_max_muestras)
 
-            medias_muestra.append(np.mean(valores))
-            errores_muestra.append(np.std(valores, ddof=1))
+#%% Unificar los datos por nombre de muestra
 
-        medias.append(medias_muestra)
-        errores.append(errores_muestra)
+df_ESAR = pd.DataFrame({
+    'Muestra': nombres_ESAR,
+    'H máximo (kA/m)': H_max_muestras,
+    'N repeticiones': ESAR_max_n,
+    'ESAR (W/g)': ESAR_max,
+    'u(ESAR) (W/g)': ESAR_max_std
+})
 
-    return np.array(medias), np.array(errores)
+df_Feret = resultados_feret[
+    ['Muestra', 'Media (nm)', 'u(Media) (nm)']
+].rename(columns={
+    'Media (nm)': 'D_Feret (nm)',
+    'u(Media) (nm)': 'u(D_Feret) (nm)'
+})
 
+df_DRX = df_cristalitas[
+    ['Muestra', 'D con corrección (nm)', 'u(D con corrección) (nm)']
+].rename(columns={
+    'D con corrección (nm)': 'D cristalita (nm)',
+    'u(D con corrección) (nm)': 'u(D cristalita) (nm)'
+})
 
-# ESAR, tau y Hc: 9 valores por muestra (3 repeticiones por campo)
-ESAR_mean, ESAR_std = media_error_repeticiones(ESAR)
-tau_mean, tau_std = media_error_repeticiones(tau)
-Hc_mean, Hc_std = media_error_repeticiones(Hc)
+df_comparacion = df_ESAR.merge(df_Feret, on='Muestra').merge(df_DRX, on='Muestra')
 
+print(df_comparacion[['Muestra', 'H máximo (kA/m)', 'N repeticiones', 'ESAR (W/g)']])
 
-# Warming rate: 3 valores por muestra, uno por campo.
-# Cada valor ya es un ufloat con media y desviación estándar.
-WR_mean = np.array([[s.n for s in muestra] for muestra in warming_rates])
-WR_std  = np.array([[s.s for s in muestra] for muestra in warming_rates])
+#%% Gráfico comparativo
 
+fig, axs = plt.subplots(3, 1, figsize=(15, 10), constrained_layout=True)
 
-# Datos para graficar
-datos_mean = [ESAR_mean, tau_mean, Hc_mean, WR_mean]
-datos_std = [ESAR_std, tau_std, Hc_std, WR_std]
+# ESAR vs diámetro Feret
+df_plot = df_comparacion.sort_values('D_Feret (nm)')
 
-ylabels = ['ESAR (W/g)',r'$\tau$ (ns)',r'$H_c$ (kA/m)','Warming rate (°C/s)']
+axs[0].errorbar(df_plot['D_Feret (nm)'],df_plot['ESAR (W/g)'],
+    xerr=df_plot['u(D_Feret) (nm)'],yerr=df_plot['u(ESAR) (W/g)'],
+    fmt='o',capsize=4)
 
-titulos = ['ESAR',r'$\tau$',r'$H_c$','Warming rate']
+for _, fila in df_plot.iterrows():
+    axs[0].annotate(fila['Muestra'],(fila['D_Feret (nm)'], fila['ESAR (W/g)']),
+        xytext=(5, 5), textcoords='offset points')
 
+axs[0].set_xlabel('Diámetro medio Feret (nm)')
+axs[0].set_ylabel('ESAR (W/g)')
+axs[0].set_title('ESAR vs diámetro Feret (SEM)', loc='left')
 
-# Gráficos
-fig04, axs = plt.subplots(
-    2, 2,
-    figsize=(14, 8),
-    constrained_layout=True,
-    sharex=True
-)
-axs = axs.flatten()
+# ESAR vs tamaño de cristalita: con y sin corrección instrumental
 
-for ax, medias, errores, ylabel, titulo in zip(axs, datos_mean, datos_std, ylabels, titulos):
-    for i, (campo, color) in enumerate(zip(campos, colores_campo)):
-        ax.errorbar(
-            temperatura,
-            medias[:, i],
-            yerr=errores[:, i],
-            fmt='o-',
-            color=color,
-            capsize=4,
-            label=campo)
-# Etiquetas del eje X: temperatura y nombre de muestra
-etiquetas_x = [f'{T}\n{nombre}' for T, nombre in zip(temperatura, nombres)]
+# Sin corrección instrumental
+df_plot = df_comparacion.merge(df_cristalitas[['Muestra', 'D sin corrección (nm)', 'u(D sin corrección) (nm)']],
+on='Muestra').sort_values('D sin corrección (nm)')
 
-for ax in axs:
-    ax.set_xticks(temperatura)
-    ax.set_xticklabels(etiquetas_x)
-    ax.grid()
-    ax.set_ylabel(ylabel)
-    ax.set_title(titulo, loc='left')
-    ax.legend(frameon=True, shadow=True)
-
-axs[2].set_xlabel('Temperatura de síntesis (°C)')
-axs[3].set_xlabel('Temperatura de síntesis (°C)')
-
-plt.suptitle('Valores medios vs temperatura de síntesis\n'
-    '300 kHz — [38, 47, 57] kA/m',fontsize=16)
-
-plt.savefig('04_metacomparativa_medias_vs_temperatura.png',
-    dpi=300)
-plt.show()
-# %%
-#%% Comparación de curvas térmicas promedio por campo magnético
-
-import numpy as np
-import matplotlib.pyplot as plt
-from scipy.interpolate import interp1d
-
-# Muestras y temperaturas de síntesis
-nombres = ['M18', 'M20', 'M15', 'M16', 'M17', 'M21', 'M19']
-temperaturas_sintesis = [215, 226, 235, 235, 237, 243, 250]
-
-resultados = [
-    res_M18, res_M20, res_M15, res_M16,
-    res_M17, res_M21, res_M19
-]
-
-campos = ['38 kA/m', '47 kA/m', '57 kA/m']
-
-# Paleta categórica de alto contraste: un color por muestra
-colores = {
-    'M18': '#0072B2',  # azul
-    'M20': '#E69F00',  # naranja
-    'M15': '#009E73',  # verde
-    'M16': '#CC79A7',  # rosa-violeta
-    'M17': '#D55E00',  # rojo anaranjado
-    'M21': '#56B4E9',  # celeste
-    'M19': '#000000',  # negro
-}
-
-# Estilos de línea complementarios
-estilos_linea = {
-    'M18': '-',
-    'M20': '-',
-    'M15': '-',
-    'M16': '--',
-    'M17': '-.',
-    'M21': '-',
-    'M19': ':',
-}
-
-
-def banda_temperatura(t, T, N=500, kind='linear'):
-    """
-    Interpola varias curvas T(t) sobre una grilla temporal común.
-
-    Devuelve:
-        t_common: grilla temporal común
-        Tmin: mínimo punto a punto
-        Tmax: máximo punto a punto
-        Tmean: promedio punto a punto
-
-    La interpolación se limita al intervalo temporal compartido
-    por todas las repeticiones.
-    """
-    t = [np.asarray(tt) for tt in t]
-    T = [np.asarray(TT) for TT in T]
-
-    datos = []
-
-    for tt, TT in zip(t, T):
-        # Ordenar los datos por tiempo
-        orden = np.argsort(tt)
-        tt = tt[orden]
-        TT = TT[orden]
-
-        # Eliminar tiempos duplicados
-        tt_unicos, indices = np.unique(tt, return_index=True)
-        TT = TT[indices]
-
-        datos.append((tt_unicos, TT))
-
-    # Intervalo temporal común
-    tmin = max(tt.min() for tt, TT in datos)
-    tmax = min(tt.max() for tt, TT in datos)
-
-    if tmin >= tmax:
-        raise ValueError(
-            "Las curvas no tienen un intervalo temporal común."
-        )
-
-    t_common = np.linspace(tmin, tmax, N)
-
-    # Interpolación de las repeticiones
-    Ti = []
-
-    for tt, TT in datos:
-        f = interp1d(tt, TT, kind=kind, bounds_error=True)
-        Ti.append(f(t_common))
-
-    Ti = np.asarray(Ti)
-
-    Tmin = np.min(Ti, axis=0)
-    Tmax = np.max(Ti, axis=0)
-    Tmean = np.mean(Ti, axis=0)
-
-    return t_common, Tmin, Tmax, Tmean
-
-
-# Figura: un panel por campo magnético
-fig, axs = plt.subplots(
-    1, 3,
-    figsize=(18, 5.5),
-    constrained_layout=True,
-    sharey=True
+axs[1].errorbar(
+    df_plot['D sin corrección (nm)'],
+    df_plot['ESAR (W/g)'],
+    xerr=df_plot['u(D sin corrección) (nm)'],
+    yerr=df_plot['u(ESAR) (W/g)'],
+    fmt='o',
+    color='tab:blue',
+    capsize=4,
+    label='Sin corrección instrumental'
 )
 
-for i, (ax, campo) in enumerate(zip(axs, campos)):
+for _, fila in df_plot.iterrows():
+    axs[1].annotate(
+        fila['Muestra'],
+        (fila['D sin corrección (nm)'], fila['ESAR (W/g)']),
+        xytext=(5, 5),
+        textcoords='offset points',
+        color='tab:blue'    )
 
-    for nombre, T_sintesis, resultado in zip(
-        nombres, temperaturas_sintesis, resultados
-    ):
+# Con corrección instrumental LaB6
+df_plot = df_comparacion.sort_values('D cristalita (nm)')
 
-        # Tres repeticiones por campo:
-        # índices 0-2: 38 kA/m
-        # índices 3-5: 47 kA/m
-        # índices 6-8: 57 kA/m
-        repeticiones = resultado[3*i:3*i+3]
-
-        t = [r.time for r in repeticiones]
-        T = [r.temperatura for r in repeticiones]
-
-        t_common, Tmin, Tmax, Tmean = banda_temperatura(t, T)
-
-        color = colores[nombre]
-        estilo = estilos_linea[nombre]
-
-        # Curva promedio
-        ax.plot(
-            t_common,
-            Tmean,
-            color=color,
-            linestyle=estilo,
-            linewidth=2.2,
-            label=f'{nombre} ({T_sintesis} °C)'
-        )
-
-        # Banda min-max de las tres repeticiones
-        ax.fill_between(
-            t_common,
-            Tmin,
-            Tmax,
-            color=color,
-            alpha=0.15,
-            linewidth=0
-        )
-
-    ax.set_title(campo)
-    ax.set_xlabel('Tiempo (s)')
-    ax.grid(True, alpha=0.3)
-    ax.legend(fontsize=8, ncol=3,loc='lower right')
-
-axs[0].set_ylabel('Temperatura (°C)')
-
-fig.suptitle(
-    'Curvas térmicas promedio por campo magnético',
-    fontsize=14
+axs[2].errorbar(
+    df_plot['D cristalita (nm)'],
+    df_plot['ESAR (W/g)'],
+    xerr=df_plot['u(D cristalita) (nm)'],
+    yerr=df_plot['u(ESAR) (W/g)'],
+    fmt='s',
+    color='tab:orange',
+    capsize=4,
+    label=r'Con corrección LaB$_6$'
 )
 
-plt.savefig(
-    '05_curvas_termicas_promedio_por_campo.png',
-    dpi=300,
-    bbox_inches='tight'
-)
+for _, fila in df_plot.iterrows():
+    axs[2].annotate(
+        fila['Muestra'],
+        (fila['D cristalita (nm)'], fila['ESAR (W/g)']),
+        xytext=(5, -10),
+        textcoords='offset points',
+        color='tab:orange'
+    )
 
-plt.show()
+axs[2].set_xlabel('Tamaño de cristalita (nm)')
+axs[2].set_ylabel('ESAR (W/g)')
+axs[1].set_title('ESAR vs tamaño de cristalita (DRX) - sin correccion', loc='left')
+axs[2].set_title('ESAR vs tamaño de cristalita (DRX) - con correccion', loc='left')
+
+for a in axs:
+    a.grid()    
+    a.legend(frameon=True, shadow=True)
+
 # %%

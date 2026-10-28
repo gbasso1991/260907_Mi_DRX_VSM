@@ -913,6 +913,7 @@ ax3.set_xlabel('2θ (°)')
 plt.suptitle('DRX en polvo')
 plt.show()
 
+resultados_cristalita = []
 #%% M1
 peaks_M1, props_M1 = find_peaks(intensity_M1, prominence=25, width=2, distance=50)
 picos_M1 = list(zip(peaks_M1, dostheta_M1[peaks_M1], intensity_M1[peaks_M1]))
@@ -944,6 +945,15 @@ for i,theta,intens in picos_M1:
 tabla_M1, resumen_M1_sin, resumen_M1_con,picos_M1, fig_M1b,fig_M1c = analizar_muestra(
     'M1', dostheta_M1, intensity_M1, picos_M1)
 
+resultados_cristalita.append({
+    'Muestra': 'M1',
+    'D sin corrección (nm)': resumen_M1_sin['D medio (nm)'],
+    'u(D sin corrección) (nm)': resumen_M1_sin['Incertidumbre (nm)'],
+    'D con corrección (nm)': resumen_M1_con['D medio (nm)'],
+    'u(D con corrección) (nm)': resumen_M1_con['Incertidumbre (nm)'],
+    'N reflexiones sin': resumen_M1_sin['N reflexiones'],
+    'N reflexiones con': resumen_M1_con['N reflexiones']
+})
 #%% M2
 peaks_M2, props_M2 = find_peaks(intensity_M2,prominence=25,width=2,distance=30)
 picos_M2 = list(zip(peaks_M2, dostheta_M2[peaks_M2], intensity_M2[peaks_M2]))
@@ -972,7 +982,15 @@ for i,theta,intens in picos_M2:
 #% M2 - Análisis de Scherrer
 tabla_M2, resumen_M2_sin, resumen_M2_con, picos_M2, fig_M2b,fig_M2c = analizar_muestra(
     'M2', dostheta_M2, intensity_M2, picos_M2)
-
+resultados_cristalita.append({
+    'Muestra': 'M2',
+    'D sin corrección (nm)': resumen_M2_sin['D medio (nm)'],
+    'u(D sin corrección) (nm)': resumen_M2_sin['Incertidumbre (nm)'],
+    'D con corrección (nm)': resumen_M2_con['D medio (nm)'],
+    'u(D con corrección) (nm)': resumen_M2_con['Incertidumbre (nm)'],
+    'N reflexiones sin': resumen_M2_sin['N reflexiones'],
+    'N reflexiones con': resumen_M2_con['N reflexiones']
+})
 #%% M3 - Detección de picos
 peaks_M3, props_M3 = find_peaks(intensity_M3, prominence=24, width=2, distance=30)
 picos_M3 = list(zip(peaks_M3, dostheta_M3[peaks_M3], intensity_M3[peaks_M3]))
@@ -1004,6 +1022,15 @@ for i,theta,intens in picos_M3:
 #% M3 - Análisis de Scherrer
 tabla_M3, resumen_M3_sin, resumen_M3_con, picos_M3, fig_M3b,fig_M3c = analizar_muestra(
     'M3', dostheta_M3, intensity_M3, picos_M3)
+resultados_cristalita.append({
+    'Muestra': 'M3',
+    'D sin corrección (nm)': resumen_M3_sin['D medio (nm)'],
+    'u(D sin corrección) (nm)': resumen_M3_sin['Incertidumbre (nm)'],
+    'D con corrección (nm)': resumen_M3_con['D medio (nm)'],
+    'u(D con corrección) (nm)': resumen_M3_con['Incertidumbre (nm)'],
+    'N reflexiones sin': resumen_M3_sin['N reflexiones'],
+    'N reflexiones con': resumen_M3_con['N reflexiones']
+})
 #%% M4 
 peaks_M4, props_M4 = find_peaks(intensity_M4, prominence=22, width=8, distance=20)
 picos_M4 = list(zip(peaks_M4, dostheta_M4[peaks_M4], intensity_M4[peaks_M4]))
@@ -1030,6 +1057,15 @@ for i,theta,intens in picos_M4:
 #% M4 - Análisis de Scherrer
 tabla_M4, resumen_M4_sin, resumen_M4_con, picos_M4, fig_M4b,fig_M4c= analizar_muestra(
     'M4', dostheta_M4, intensity_M4, picos_M4)
+resultados_cristalita.append({
+    'Muestra': 'M4',
+    'D sin corrección (nm)': resumen_M4_sin['D medio (nm)'],
+    'u(D sin corrección) (nm)': resumen_M4_sin['Incertidumbre (nm)'],
+    'D con corrección (nm)': resumen_M4_con['D medio (nm)'],
+    'u(D con corrección) (nm)': resumen_M4_con['Incertidumbre (nm)'],
+    'N reflexiones sin': resumen_M4_sin['N reflexiones'],
+    'N reflexiones con': resumen_M4_con['N reflexiones']
+})
 #%% M5 
 peaks_M5, props_M5 = find_peaks(intensity_M5,prominence=6,
                                 width=7,
@@ -1058,7 +1094,16 @@ for i,theta,intens in picos_M5:
     print(f'{i:4} | {theta:7.2f} | {intens:7.0f}')       
 #M5 - Análisis de Scherrer
 tabla_M5, resumen_M5_sin, resumen_M5_con, picos_M5, fig_M5b,fig_M5c = analizar_muestra(
-    'M5', dostheta_M5, intensity_M5, picos_M5)    
+    'M5', dostheta_M5, intensity_M5, picos_M5)
+resultados_cristalita.append({
+    'Muestra': 'M5',
+    'D sin corrección (nm)': resumen_M5_sin['D medio (nm)'],
+    'u(D sin corrección) (nm)': resumen_M5_sin['Incertidumbre (nm)'],
+    'D con corrección (nm)': resumen_M5_con['D medio (nm)'],
+    'u(D con corrección) (nm)': resumen_M5_con['Incertidumbre (nm)'],
+    'N reflexiones sin': resumen_M5_sin['N reflexiones'],
+    'N reflexiones con': resumen_M5_con['N reflexiones']
+})    
 #%% M6 
 peaks_M6, props_M6 = find_peaks(intensity_M6,
                                 prominence=15,
@@ -1090,6 +1135,15 @@ for i,theta,intens in picos_M6:
 #M6 - Análisis de Scherrer
 tabla_M6, resumen_M6_sin, resumen_M6_con, picos_M6, fig_M6b,fig_M6c = analizar_muestra(
     'M6', dostheta_M6, intensity_M6, picos_M6)
+resultados_cristalita.append({
+    'Muestra': 'M6',
+    'D sin corrección (nm)': resumen_M6_sin['D medio (nm)'],
+    'u(D sin corrección) (nm)': resumen_M6_sin['Incertidumbre (nm)'],
+    'D con corrección (nm)': resumen_M6_con['D medio (nm)'],
+    'u(D con corrección) (nm)': resumen_M6_con['Incertidumbre (nm)'],
+    'N reflexiones sin': resumen_M6_sin['N reflexiones'],
+    'N reflexiones con': resumen_M6_con['N reflexiones']
+})
 #%% M7 
 peaks_M7, props_M7 = find_peaks(intensity_M7,
                                 prominence=20,
@@ -1121,7 +1175,15 @@ for i,theta,intens in picos_M7:
 #M7 - Análisis de Scherrer
 tabla_M7, resumen_M7_sin, resumen_M7_con, picos_M7, fig_M7b,fig_M7c = analizar_muestra(
     'M7', dostheta_M7, intensity_M7, picos_M7)
-
+resultados_cristalita.append({
+    'Muestra': 'M7',
+    'D sin corrección (nm)': resumen_M7_sin['D medio (nm)'],
+    'u(D sin corrección) (nm)': resumen_M7_sin['Incertidumbre (nm)'],
+    'D con corrección (nm)': resumen_M7_con['D medio (nm)'],
+    'u(D con corrección) (nm)': resumen_M7_con['Incertidumbre (nm)'],
+    'N reflexiones sin': resumen_M7_sin['N reflexiones'],
+    'N reflexiones con': resumen_M7_con['N reflexiones']
+})
 #%% M9
 peaks_M9, props_M9 = find_peaks(intensity_M9,
                                 height=30,
@@ -1153,6 +1215,15 @@ for i,theta,intens in picos_M9:
 #M9 - Análisis de Scherrer
 tabla_M9, resumen_M9_sin, resumen_M9_con, picos_M9, fig_M9b,fig_M9c = analizar_muestra(
     'M9', dostheta_M9, intensity_M9, picos_M9)
+resultados_cristalita.append({
+    'Muestra': 'M9',
+    'D sin corrección (nm)': resumen_M9_sin['D medio (nm)'],
+    'u(D sin corrección) (nm)': resumen_M9_sin['Incertidumbre (nm)'],
+    'D con corrección (nm)': resumen_M9_con['D medio (nm)'],
+    'u(D con corrección) (nm)': resumen_M9_con['Incertidumbre (nm)'],
+    'N reflexiones sin': resumen_M9_sin['N reflexiones'],
+    'N reflexiones con': resumen_M9_con['N reflexiones']
+})
 #%% M10 
 peaks_M10, props_M10 = find_peaks(intensity_M10,
                                 height=24,
@@ -1185,7 +1256,15 @@ for i,theta,intens in picos_M10:
 #M10 - Análisis de Scherrer
 tabla_M10, resumen_M10_sin, resumen_M10_con, picos_M10, fig_M10b,fig_M10c = analizar_muestra(
     'M10', dostheta_M10, intensity_M10, picos_M10)
-
+resultados_cristalita.append({
+    'Muestra': 'M10',
+    'D sin corrección (nm)': resumen_M10_sin['D medio (nm)'],
+    'u(D sin corrección) (nm)': resumen_M10_sin['Incertidumbre (nm)'],
+    'D con corrección (nm)': resumen_M10_con['D medio (nm)'],
+    'u(D con corrección) (nm)': resumen_M10_con['Incertidumbre (nm)'],
+    'N reflexiones sin': resumen_M10_sin['N reflexiones'],
+    'N reflexiones con': resumen_M10_con['N reflexiones']
+})
 #%%  M11
 peaks_M11, props_M11 = find_peaks(intensity_M11,
                                   height=28,
@@ -1219,6 +1298,15 @@ for i,theta,intens in picos_M11:
 #M11 - Análisis de Scherrer
 tabla_M11, resumen_M11_sin, resumen_M11_con, picos_M11, fig_M11b,fig_M11c = analizar_muestra(
     'M11', dostheta_M11, intensity_M11, picos_M11[:-1])
+resultados_cristalita.append({
+    'Muestra': 'M11',
+    'D sin corrección (nm)': resumen_M11_sin['D medio (nm)'],
+    'u(D sin corrección) (nm)': resumen_M11_sin['Incertidumbre (nm)'],
+    'D con corrección (nm)': resumen_M11_con['D medio (nm)'],
+    'u(D con corrección) (nm)': resumen_M11_con['Incertidumbre (nm)'],
+    'N reflexiones sin': resumen_M11_sin['N reflexiones'],
+    'N reflexiones con': resumen_M11_con['N reflexiones']
+})
 #%% M12 
 peaks_M12, props_M12 = find_peaks(intensity_M12,prominence=25,width=2,distance=50)
 picos_M12 = list(zip(peaks_M12, dostheta_M12[peaks_M12], intensity_M12[peaks_M12]))
@@ -1246,7 +1334,15 @@ for i,theta,intens in picos_M12:
 #M12 - Análisis de Scherrer
 tabla_M12, resumen_M12_sin, resumen_M12_con, picos_M12, fig_M12b,fig_M12c = analizar_muestra(
     'M12', dostheta_M12, intensity_M12, picos_M12)
-
+resultados_cristalita.append({
+    'Muestra': 'M12',
+    'D sin corrección (nm)': resumen_M12_sin['D medio (nm)'],
+    'u(D sin corrección) (nm)': resumen_M12_sin['Incertidumbre (nm)'],
+    'D con corrección (nm)': resumen_M12_con['D medio (nm)'],
+    'u(D con corrección) (nm)': resumen_M12_con['Incertidumbre (nm)'],
+    'N reflexiones sin': resumen_M12_sin['N reflexiones'],
+    'N reflexiones con': resumen_M12_con['N reflexiones']
+})
 # %% salvo todas las figuras
 fig_LaB6a.savefig('LaB6_DRX',dpi=300)
 fig_LaB6b.savefig('LaB6_DRX_c_picos',dpi=300)
@@ -1296,6 +1392,23 @@ fig_M11c.savefig('M11_tamaño_cristalita',dpi=300)
 fig_M12a.savefig('M12_DRX',dpi=300)
 fig_M12b.savefig('M12_DRX_c_ajustes',dpi=300)
 fig_M12c.savefig('M12_tamaño_cristalita',dpi=300)
+
+#%%
+#%% Exportar resumen de tamaños de cristalita
+
+df_cristalitas = pd.DataFrame(resultados_cristalita)
+
+df_cristalitas.to_csv(
+    'Resultados_cristalitas_Scherrer.txt',
+    sep='\t',
+    index=False,
+    float_format='%.4f'
+)
+
+print('\nResultados de tamaños de cristalita:')
+print(df_cristalitas.to_string(index=False, float_format=lambda x: f'{x:.4f}'))
+print('\nArchivo guardado: Resultados_cristalitas_Scherrer.txt')
+
 # %%
 #%% Tamaño medio de cristalita por muestra
 muestras = ['M1','M2','M3','M4','M5','M6','M7','M9','M10','M11','M12']

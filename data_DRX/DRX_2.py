@@ -109,7 +109,7 @@ def ajustar_doblete(x, y, centro_ref, ventana=0.9):
     A0 = max(np.max(yp)-fondo0, np.finfo(float).eps)
     p0 = [A0, centro_ref, 0.08, 0.08, 0.5, 0.5, fondo0, 0]
     limites_inf = [0, centro_ref-ventana/3, 0.003, 0.003, 0, 0, -np.inf, -np.inf]
-    limites_sup=[np.inf, centro_ref+ventana/3, ventana/2, ventana/2, 1, 1.0, np.inf, np.inf]
+    limites_sup=[np.inf, centro_ref+ventana/3, ventana/2, ventana/2, 1, 0.85, np.inf, np.inf]
     popt, pcov = curve_fit(
         doblete_pvoigt_fondo, xp, yp, p0=p0,
         bounds=(limites_inf, limites_sup), maxfev=100000
@@ -376,8 +376,22 @@ def analizar_muestra_311(nombre, x, y, df_LaB6, centro_ref=35.5, ventana=1.1, gr
         plt.show()
 
     return tabla, fig, popt, pcov
-
-
+# Incertidumbre del tamaño de cristalita por Monte Carlo
+rng = np.random.default_rng(12345)
+N_MC = 100_000
+def incertidumbre_scherrer_MC(xc, fwhm, pcov, N_MC=100_000, rng=None):
+    if rng is None:
+        rng = np.random.default_rng()
+    media = np.array([xc, fwhm])
+    cov = pcov[np.ix_([1, 2], [1, 2])]
+    muestras = rng.multivariate_normal(media, cov, size=N_MC)
+    xc_MC = muestras[:, 0]
+    fwhm_MC = muestras[:, 1]
+    validos = np.isfinite(xc_MC) & np.isfinite(fwhm_MC) & (fwhm_MC > 0)
+    theta_MC = np.deg2rad(xc_MC[validos]/2)
+    beta_MC = np.deg2rad(fwhm_MC[validos])
+    D_MC = K*(lambda_X/10)/(beta_MC*np.cos(theta_MC))
+    return np.std(D_MC, ddof=1)
 #%% Importo Data
 data_M1 = np.loadtxt('data_DRX/M01.ASC', skiprows=0)
 data_M2 = np.loadtxt('data_DRX/M02.ASC', skiprows=0)
@@ -487,7 +501,7 @@ print('M1',f'{len(peaks_M1)} picos detectados\n')
 print('indx | 2θ (°) | Intensidad')
 for i,theta,intens in picos_M1:
     print(f'{i:4} | {theta:7.2f} | {intens:7.0f}')
-#%% M1 - Ajuste del doblete Cu Kα para la reflexión (311)
+#%% #%% M1 - Ajuste del doblete Cu Kα para la reflexión (311)
 centro_ref = reflexiones['(311)']
 ventana = 1.1
 
@@ -511,6 +525,7 @@ xp, yp, popt, pcov, modelo = ajustar_doblete(
 errores = np.sqrt(np.maximum(np.diag(pcov), 0))
 A, xc, fwhm1, fwhm2, eta, ratio, b0, b1 = popt
 err_xc, err_fwhm1, err_fwhm2 = errores[1], errores[2], errores[3]
+err_eta = errores[4]
 xc2 = posicion_Ka2(xc)
 
 print(f'\nM1 - Reflexión (311)')
@@ -518,7 +533,7 @@ print(f'2θ Kα₁ = {xc:.5f} ± {err_xc:.5f}°')
 print(f'2θ Kα₂ = {xc2:.5f}°')
 print(f'FWHM Kα₁ = {fwhm1:.6f} ± {err_fwhm1:.6f}°')
 print(f'FWHM Kα₂ = {fwhm2:.6f} ± {err_fwhm2:.6f}°')
-print(f'η = {eta:.4f}')
+print(f'η = {eta:.4f} ± {err_eta:.4f}')
 print(f'Relación de intensidades Kα₂/Kα₁ = {ratio:.4f}')
 
 # Diagnóstico del ajuste
@@ -551,13 +566,49 @@ plt.show()
 
 # Tamaño de cristalita por Scherrer usando únicamente Kα1
 D_M1_sin = scherrer_D(fwhm1, xc)
+err_D_M1_sin = incertidumbre_scherrer_MC(xc, fwhm1, pcov, N_MC=N_MC, rng=rng)
+
+# Corrección instrumental
 fwhm_M1_corr = corregir_fwhm_instrumental(fwhm1, eta, xc, df_LaB6)
 D_M1_corr = scherrer_D(fwhm_M1_corr, xc) if np.isfinite(fwhm_M1_corr) else np.nan
 
-print(f'\nM1 - Scherrer')
-print(f'D sin corrección instrumental = {D_M1_sin:.2f} nm')
-print(f'FWHM Kα₁ corregido = {fwhm_M1_corr:.6f}°')
-print(f'D con corrección instrumental = {D_M1_corr:.2f} nm')
+# Incertidumbre del tamaño corregido por Monte Carlo
+if np.isfinite(fwhm_M1_corr):
+    indices_MC = [1, 2, 4]  # xc, fwhm1, eta
+    media_MC = popt[indices_MC]
+    cov_MC = pcov[np.ix_(indices_MC, indices_MC)]
+    muestras_MC = rng.multivariate_normal(media_MC, cov_MC, size=N_MC)
+
+    D_MC_corr = []
+    for xc_i, fwhm_i, eta_i in muestras_MC:
+        if fwhm_i <= 0 or not (0 <= eta_i <= 1):
+            continue
+        fwhm_i_corr = corregir_fwhm_instrumental(fwhm_i, eta_i, xc_i, df_LaB6)
+        if np.isfinite(fwhm_i_corr) and fwhm_i_corr > 0:
+            D_MC_corr.append(scherrer_D(fwhm_i_corr, xc_i))
+
+    err_D_M1_corr = np.std(D_MC_corr, ddof=1) if len(D_MC_corr) > 1 else np.nan
+else:
+    err_D_M1_corr = np.nan
+
+# Guardar los resultados con incertidumbre como ufloat
+from uncertainties import ufloat
+
+xc_M1 = ufloat(xc, err_xc)
+fwhm1_M1 = ufloat(fwhm1, err_fwhm1)
+fwhm2_M1 = ufloat(fwhm2, err_fwhm2)
+eta_M1 = ufloat(eta, err_eta)
+
+D_M1_sin = ufloat(D_M1_sin, err_D_M1_sin)
+fwhm_M1_corr = ufloat(fwhm_M1_corr, err_fwhm1) if np.isfinite(fwhm_M1_corr) else ufloat(np.nan, np.nan)
+D_M1_corr = ufloat(D_M1_corr, err_D_M1_corr) if np.isfinite(D_M1_corr) and np.isfinite(err_D_M1_corr) else ufloat(np.nan, np.nan)
+
+print('\nM1 - Scherrer')
+print(f'2θ Kα₁ = {xc_M1:.2uS}°')
+print(f'FWHM Kα₁ sin corrección = {fwhm1_M1:.2uS}°')
+print(f'D sin corrección instrumental = {D_M1_sin:.1uS} nm')
+print(f'FWHM Kα₁ corregido = {fwhm_M1_corr:.2uS}°')
+print(f'D con corrección instrumental = {D_M1_corr:.1uS} nm')
 
 #%% M2
 peaks_M2, props_M2 = find_peaks(intensity_M2,prominence=25,width=2,distance=30)
@@ -585,7 +636,7 @@ print('indx |  2θ (°) | Intensidad')
 for i,theta,intens in picos_M2:
     print(f'{i:4} | {theta:7.2f} | {intens:7.0f}')
 
-#%%#%% M2 - Ajuste del doblete Cu Kα para la reflexión (311)
+#%% #%% M2 - Ajuste del doblete Cu Kα para la reflexión (311)
 centro_ref = reflexiones['(311)']
 ventana = 1.1
 
@@ -608,7 +659,7 @@ xp, yp, popt, pcov, modelo = ajustar_doblete(
 
 errores = np.sqrt(np.maximum(np.diag(pcov), 0))
 A, xc, fwhm1, fwhm2, eta, ratio, b0, b1 = popt
-err_xc, err_fwhm1, err_fwhm2 = errores[1], errores[2], errores[3]
+err_xc, err_fwhm1, err_fwhm2, err_eta = errores[1], errores[2], errores[3], errores[4]
 xc2 = posicion_Ka2(xc)
 
 print(f'\nM2 - Reflexión (311)')
@@ -647,16 +698,66 @@ ax.grid(alpha=0.25)
 ax.legend()
 plt.show()
 
-# Tamaño de cristalita por Scherrer usando únicamente Kα1
-D_M2_sin = scherrer_D(fwhm1, xc)
-fwhm_M2_corr = corregir_fwhm_instrumental(fwhm1, eta, xc, df_LaB6)
-D_M2_corr = scherrer_D(fwhm_M2_corr, xc) if np.isfinite(fwhm_M2_corr) else np.nan
+# Tamaño de cristalita por Scherrer e incertidumbres por Monte Carlo
+rng = np.random.default_rng(12345)
+N_MC = 100_000
+
+# Sin corrección instrumental: muestreo conjunto de 2θ y FWHM Kα1
+media_sin = np.array([xc, fwhm1])
+cov_sin = pcov[np.ix_([1, 2], [1, 2])]
+muestras_sin = rng.multivariate_normal(media_sin, cov_sin, size=N_MC)
+validos_sin = np.isfinite(muestras_sin).all(axis=1) & (muestras_sin[:, 1] > 0)
+xc_MC_sin, fwhm_MC_sin = muestras_sin[validos_sin].T
+D_MC_sin = K*(lambda_X/10)/(np.deg2rad(fwhm_MC_sin)*np.cos(np.deg2rad(xc_MC_sin/2)))
+
+D_M2_sin_val = scherrer_D(fwhm1, xc)
+err_D_M2_sin = np.std(D_MC_sin, ddof=1)
+
+# Corrección instrumental: propagar la covarianza de 2θ, FWHM Kα1 y eta
+media_corr = np.array([xc, fwhm1, eta])
+cov_corr = pcov[np.ix_([1, 2, 4], [1, 2, 4])]
+muestras_corr = rng.multivariate_normal(media_corr, cov_corr, size=N_MC)
+
+fwhm_MC_corr = []
+D_MC_corr = []
+
+for xc_i, fwhm_i, eta_i in muestras_corr:
+    if not np.isfinite([xc_i, fwhm_i, eta_i]).all() or fwhm_i <= 0:
+        continue
+    fwhm_i_corr = corregir_fwhm_instrumental(fwhm_i, eta_i, xc_i, df_LaB6)
+    if not np.isfinite(fwhm_i_corr) or fwhm_i_corr <= 0:
+        continue
+    D_i_corr = scherrer_D(fwhm_i_corr, xc_i)
+    if np.isfinite(D_i_corr):
+        fwhm_MC_corr.append(fwhm_i_corr)
+        D_MC_corr.append(D_i_corr)
+
+fwhm_M2_corr_val = corregir_fwhm_instrumental(fwhm1, eta, xc, df_LaB6)
+D_M2_corr_val = scherrer_D(fwhm_M2_corr_val, xc) if np.isfinite(fwhm_M2_corr_val) else np.nan
+
+if len(fwhm_MC_corr) > 1 and np.isfinite(fwhm_M2_corr_val):
+    err_fwhm_M2_corr = np.std(fwhm_MC_corr, ddof=1)
+    err_D_M2_corr = np.std(D_MC_corr, ddof=1)
+else:
+    err_fwhm_M2_corr = np.nan
+    err_D_M2_corr = np.nan
+
+# Guardar los resultados como ufloat para recopilarlos en una tabla
+xc_M2 = ufloat(xc, err_xc)
+fwhm1_M2 = ufloat(fwhm1, err_fwhm1)
+fwhm2_M2 = ufloat(fwhm2, err_fwhm2)
+eta_M2 = ufloat(eta, err_eta)
+ratio_M2 = ufloat(ratio, errores[5])
+D_M2_sin = ufloat(D_M2_sin_val, err_D_M2_sin)
+fwhm_M2_corr = ufloat(fwhm_M2_corr_val, err_fwhm_M2_corr) if np.isfinite(fwhm_M2_corr_val) and np.isfinite(err_fwhm_M2_corr) else ufloat(np.nan, np.nan)
+D_M2_corr = ufloat(D_M2_corr_val, err_D_M2_corr) if np.isfinite(D_M2_corr_val) and np.isfinite(err_D_M2_corr) else ufloat(np.nan, np.nan)
 
 print(f'\nM2 - Scherrer')
-print(f'D sin corrección instrumental = {D_M2_sin:.2f} nm')
-print(f'FWHM Kα₁ corregido = {fwhm_M2_corr:.6f}°')
-print(f'D con corrección instrumental = {D_M2_corr:.2f} nm')
-
+print(f'2θ Kα₁ = {xc_M2:.2uS}°')
+print(f'FWHM Kα₁ sin corrección = {fwhm1_M2:.1uS}°')
+print(f'D sin corrección instrumental = {D_M2_sin:.2uS} nm')
+print(f'FWHM Kα₁ corregido = {fwhm_M2_corr:.1uS}°')
+print(f'D con corrección instrumental = {D_M2_corr:.2uS} nm')
 
 #%% M3 - Detección de picos
 peaks_M3, props_M3 = find_peaks(intensity_M3, prominence=24, width=2, distance=30)
@@ -709,7 +810,7 @@ xp, yp, popt, pcov, modelo = ajustar_doblete(
 
 errores = np.sqrt(np.maximum(np.diag(pcov), 0))
 A, xc, fwhm1, fwhm2, eta, ratio, b0, b1 = popt
-err_xc, err_fwhm1, err_fwhm2 = errores[1], errores[2], errores[3]
+err_xc, err_fwhm1, err_fwhm2, err_eta = errores[1], errores[2], errores[3], errores[4]
 xc2 = posicion_Ka2(xc)
 
 print(f'\nM3 - Reflexión (311)')
@@ -748,16 +849,65 @@ ax.grid(alpha=0.25)
 ax.legend()
 plt.show()
 
-# Tamaño de cristalita por Scherrer usando únicamente Kα1
-D_M3_sin = scherrer_D(fwhm1, xc)
-fwhm_M3_corr = corregir_fwhm_instrumental(fwhm1, eta, xc, df_LaB6)
-D_M3_corr = scherrer_D(fwhm_M3_corr, xc) if np.isfinite(fwhm_M3_corr) else np.nan
+# Tamaño de cristalita por Scherrer e incertidumbres por Monte Carlo
+# Se reutilizan rng y N_MC definidos en la celda de M2
+
+# Sin corrección instrumental: muestreo conjunto de 2θ y FWHM Kα1
+media_sin = np.array([xc, fwhm1])
+cov_sin = pcov[np.ix_([1, 2], [1, 2])]
+muestras_sin = rng.multivariate_normal(media_sin, cov_sin, size=N_MC)
+validos_sin = np.isfinite(muestras_sin).all(axis=1) & (muestras_sin[:, 1] > 0)
+xc_MC_sin, fwhm_MC_sin = muestras_sin[validos_sin].T
+D_MC_sin = K*(lambda_X/10)/(np.deg2rad(fwhm_MC_sin)*np.cos(np.deg2rad(xc_MC_sin/2)))
+
+D_M3_sin_val = scherrer_D(fwhm1, xc)
+err_D_M3_sin = np.std(D_MC_sin, ddof=1)
+
+# Corrección instrumental: propagar la covarianza de 2θ, FWHM Kα1 y eta
+media_corr = np.array([xc, fwhm1, eta])
+cov_corr = pcov[np.ix_([1, 2, 4], [1, 2, 4])]
+muestras_corr = rng.multivariate_normal(media_corr, cov_corr, size=N_MC)
+
+fwhm_MC_corr = []
+D_MC_corr = []
+
+for xc_i, fwhm_i, eta_i in muestras_corr:
+    if not np.isfinite([xc_i, fwhm_i, eta_i]).all() or fwhm_i <= 0:
+        continue
+    fwhm_i_corr = corregir_fwhm_instrumental(fwhm_i, eta_i, xc_i, df_LaB6)
+    if not np.isfinite(fwhm_i_corr) or fwhm_i_corr <= 0:
+        continue
+    D_i_corr = scherrer_D(fwhm_i_corr, xc_i)
+    if np.isfinite(D_i_corr):
+        fwhm_MC_corr.append(fwhm_i_corr)
+        D_MC_corr.append(D_i_corr)
+
+fwhm_M3_corr_val = corregir_fwhm_instrumental(fwhm1, eta, xc, df_LaB6)
+D_M3_corr_val = scherrer_D(fwhm_M3_corr_val, xc) if np.isfinite(fwhm_M3_corr_val) else np.nan
+
+if len(fwhm_MC_corr) > 1 and np.isfinite(fwhm_M3_corr_val):
+    err_fwhm_M3_corr = np.std(fwhm_MC_corr, ddof=1)
+    err_D_M3_corr = np.std(D_MC_corr, ddof=1)
+else:
+    err_fwhm_M3_corr = np.nan
+    err_D_M3_corr = np.nan
+
+# Guardar los resultados como ufloat para recopilarlos en una tabla
+xc_M3 = ufloat(xc, err_xc)
+fwhm1_M3 = ufloat(fwhm1, err_fwhm1)
+fwhm2_M3 = ufloat(fwhm2, err_fwhm2)
+eta_M3 = ufloat(eta, err_eta)
+ratio_M3 = ufloat(ratio, errores[5])
+D_M3_sin = ufloat(D_M3_sin_val, err_D_M3_sin)
+fwhm_M3_corr = ufloat(fwhm_M3_corr_val, err_fwhm_M3_corr) if np.isfinite(fwhm_M3_corr_val) and np.isfinite(err_fwhm_M3_corr) else ufloat(np.nan, np.nan)
+D_M3_corr = ufloat(D_M3_corr_val, err_D_M3_corr) if np.isfinite(D_M3_corr_val) and np.isfinite(err_D_M3_corr) else ufloat(np.nan, np.nan)
 
 print(f'\nM3 - Scherrer')
-print(f'D sin corrección instrumental = {D_M3_sin:.2f} nm')
-print(f'FWHM Kα₁ corregido = {fwhm_M3_corr:.6f}°')
-print(f'D con corrección instrumental = {D_M3_corr:.2f} nm')
-
+print(f'2θ Kα₁ = {xc_M3:.2uS}°')
+print(f'FWHM Kα₁ sin corrección = {fwhm1_M3:.1uS}°')
+print(f'D sin corrección instrumental = {D_M3_sin:.2uS} nm')
+print(f'FWHM Kα₁ corregido = {fwhm_M3_corr:.1uS}°')
+print(f'D con corrección instrumental = {D_M3_corr:.2uS} nm')
 
 #%% M4 
 peaks_M4, props_M4 = find_peaks(intensity_M4, prominence=22, width=8, distance=20)
@@ -782,6 +932,7 @@ print('M4',f'{len(peaks_M4)} picos detectados\n')
 print('indx |  2θ (°) | Intensidad')
 for i,theta,intens in picos_M4:
     print(f'{i:4} | {theta:7.2f} | {intens:7.0f}')
+    
 #%% M4 - Ajuste del doblete Cu Kα para la reflexión (311)
 centro_ref = reflexiones['(311)']
 ventana = 1.1
@@ -805,7 +956,7 @@ xp, yp, popt, pcov, modelo = ajustar_doblete(
 
 errores = np.sqrt(np.maximum(np.diag(pcov), 0))
 A, xc, fwhm1, fwhm2, eta, ratio, b0, b1 = popt
-err_xc, err_fwhm1, err_fwhm2 = errores[1], errores[2], errores[3]
+err_xc, err_fwhm1, err_fwhm2, err_eta = errores[1], errores[2], errores[3], errores[4]
 xc2 = posicion_Ka2(xc)
 
 print(f'\nM4 - Reflexión (311)')
@@ -844,15 +995,66 @@ ax.grid(alpha=0.25)
 ax.legend()
 plt.show()
 
-# Tamaño de cristalita por Scherrer usando únicamente Kα1
-D_M4_sin = scherrer_D(fwhm1, xc)
-fwhm_M4_corr = corregir_fwhm_instrumental(fwhm1, eta, xc, df_LaB6)
-D_M4_corr = scherrer_D(fwhm_M4_corr, xc) if np.isfinite(fwhm_M4_corr) else np.nan
+# Tamaño de cristalita por Scherrer e incertidumbres por Monte Carlo
+# Se reutilizan rng y N_MC definidos en la celda de M2
+
+# Sin corrección instrumental: muestreo conjunto de 2θ y FWHM Kα1
+media_sin = np.array([xc, fwhm1])
+cov_sin = pcov[np.ix_([1, 2], [1, 2])]
+muestras_sin = rng.multivariate_normal(media_sin, cov_sin, size=N_MC)
+validos_sin = np.isfinite(muestras_sin).all(axis=1) & (muestras_sin[:, 1] > 0)
+xc_MC_sin, fwhm_MC_sin = muestras_sin[validos_sin].T
+D_MC_sin = K*(lambda_X/10)/(np.deg2rad(fwhm_MC_sin)*np.cos(np.deg2rad(xc_MC_sin/2)))
+
+D_M4_sin_val = scherrer_D(fwhm1, xc)
+err_D_M4_sin = np.std(D_MC_sin, ddof=1)
+
+# Corrección instrumental: propagar la covarianza de 2θ, FWHM Kα1 y eta
+media_corr = np.array([xc, fwhm1, eta])
+cov_corr = pcov[np.ix_([1, 2, 4], [1, 2, 4])]
+muestras_corr = rng.multivariate_normal(media_corr, cov_corr, size=N_MC)
+
+fwhm_MC_corr = []
+D_MC_corr = []
+
+for xc_i, fwhm_i, eta_i in muestras_corr:
+    if not np.isfinite([xc_i, fwhm_i, eta_i]).all() or fwhm_i <= 0:
+        continue
+    fwhm_i_corr = corregir_fwhm_instrumental(fwhm_i, eta_i, xc_i, df_LaB6)
+    if not np.isfinite(fwhm_i_corr) or fwhm_i_corr <= 0:
+        continue
+    D_i_corr = scherrer_D(fwhm_i_corr, xc_i)
+    if np.isfinite(D_i_corr):
+        fwhm_MC_corr.append(fwhm_i_corr)
+        D_MC_corr.append(D_i_corr)
+
+fwhm_M4_corr_val = corregir_fwhm_instrumental(fwhm1, eta, xc, df_LaB6)
+D_M4_corr_val = scherrer_D(fwhm_M4_corr_val, xc) if np.isfinite(fwhm_M4_corr_val) else np.nan
+
+if len(fwhm_MC_corr) > 1 and np.isfinite(fwhm_M4_corr_val):
+    err_fwhm_M4_corr = np.std(fwhm_MC_corr, ddof=1)
+    err_D_M4_corr = np.std(D_MC_corr, ddof=1)
+else:
+    err_fwhm_M4_corr = np.nan
+    err_D_M4_corr = np.nan
+
+# Guardar los resultados como ufloat para recopilarlos en una tabla
+xc_M4 = ufloat(xc, err_xc)
+fwhm1_M4 = ufloat(fwhm1, err_fwhm1)
+fwhm2_M4 = ufloat(fwhm2, err_fwhm2)
+eta_M4 = ufloat(eta, err_eta)
+ratio_M4 = ufloat(ratio, errores[5])
+D_M4_sin = ufloat(D_M4_sin_val, err_D_M4_sin)
+fwhm_M4_corr = ufloat(fwhm_M4_corr_val, err_fwhm_M4_corr) if np.isfinite(fwhm_M4_corr_val) and np.isfinite(err_fwhm_M4_corr) else ufloat(np.nan, np.nan)
+D_M4_corr = ufloat(D_M4_corr_val, err_D_M4_corr) if np.isfinite(D_M4_corr_val) and np.isfinite(err_D_M4_corr) else ufloat(np.nan, np.nan)
 
 print(f'\nM4 - Scherrer')
-print(f'D sin corrección instrumental = {D_M4_sin:.2f} nm')
-print(f'FWHM Kα₁ corregido = {fwhm_M4_corr:.6f}°')
-print(f'D con corrección instrumental = {D_M4_corr:.2f} nm')
+print(f'2θ Kα₁ = {xc_M4:.2uS}°')
+print(f'FWHM Kα₁ sin corrección = {fwhm1_M4:.2uS}°')
+print(f'D sin corrección instrumental = {D_M4_sin:.2uS} nm')
+print(f'FWHM Kα₁ corregido = {fwhm_M4_corr:.2uS}°')
+print(f'D con corrección instrumental = {D_M4_corr:.2uS} nm')
+    
 #%% M5 
 peaks_M5, props_M5 = find_peaks(intensity_M5,prominence=6,
                                 width=7,
@@ -878,7 +1080,7 @@ ax.set_ylabel('Intensidad (u.a.)')
 print('M5',f'{len(peaks_M5)} picos detectados\n')
 print('indx |  2θ (°) | Intensidad')
 for i,theta,intens in picos_M5:
-    print(f'{i:4} | {theta:7.2f} | {intens:7.0f}')       
+    print(f'{i:4} | {theta:7.2f} | {intens:7.0f}')
 #%% M5 - Ajuste del doblete Cu Kα para la reflexión (311)
 centro_ref = reflexiones['(311)']
 ventana = 1.1
@@ -902,7 +1104,7 @@ xp, yp, popt, pcov, modelo = ajustar_doblete(
 
 errores = np.sqrt(np.maximum(np.diag(pcov), 0))
 A, xc, fwhm1, fwhm2, eta, ratio, b0, b1 = popt
-err_xc, err_fwhm1, err_fwhm2 = errores[1], errores[2], errores[3]
+err_xc, err_fwhm1, err_fwhm2, err_eta = errores[1], errores[2], errores[3], errores[4]
 xc2 = posicion_Ka2(xc)
 
 print(f'\nM5 - Reflexión (311)')
@@ -941,15 +1143,65 @@ ax.grid(alpha=0.25)
 ax.legend()
 plt.show()
 
-# Tamaño de cristalita por Scherrer usando únicamente Kα1
-D_M5_sin = scherrer_D(fwhm1, xc)
-fwhm_M5_corr = corregir_fwhm_instrumental(fwhm1, eta, xc, df_LaB6)
-D_M5_corr = scherrer_D(fwhm_M5_corr, xc) if np.isfinite(fwhm_M5_corr) else np.nan
+# Tamaño de cristalita por Scherrer e incertidumbres por Monte Carlo
+# Se reutilizan rng y N_MC definidos en la celda de M2
+
+# Sin corrección instrumental: muestreo conjunto de 2θ y FWHM Kα1
+media_sin = np.array([xc, fwhm1])
+cov_sin = pcov[np.ix_([1, 2], [1, 2])]
+muestras_sin = rng.multivariate_normal(media_sin, cov_sin, size=N_MC)
+validos_sin = np.isfinite(muestras_sin).all(axis=1) & (muestras_sin[:, 1] > 0)
+xc_MC_sin, fwhm_MC_sin = muestras_sin[validos_sin].T
+D_MC_sin = K*(lambda_X/10)/(np.deg2rad(fwhm_MC_sin)*np.cos(np.deg2rad(xc_MC_sin/2)))
+
+D_M5_sin_val = scherrer_D(fwhm1, xc)
+err_D_M5_sin = np.std(D_MC_sin, ddof=1)
+
+# Corrección instrumental: propagar la covarianza de 2θ, FWHM Kα1 y eta
+media_corr = np.array([xc, fwhm1, eta])
+cov_corr = pcov[np.ix_([1, 2, 4], [1, 2, 4])]
+muestras_corr = rng.multivariate_normal(media_corr, cov_corr, size=N_MC)
+
+fwhm_MC_corr = []
+D_MC_corr = []
+
+for xc_i, fwhm_i, eta_i in muestras_corr:
+    if not np.isfinite([xc_i, fwhm_i, eta_i]).all() or fwhm_i <= 0:
+        continue
+    fwhm_i_corr = corregir_fwhm_instrumental(fwhm_i, eta_i, xc_i, df_LaB6)
+    if not np.isfinite(fwhm_i_corr) or fwhm_i_corr <= 0:
+        continue
+    D_i_corr = scherrer_D(fwhm_i_corr, xc_i)
+    if np.isfinite(D_i_corr):
+        fwhm_MC_corr.append(fwhm_i_corr)
+        D_MC_corr.append(D_i_corr)
+
+fwhm_M5_corr_val = corregir_fwhm_instrumental(fwhm1, eta, xc, df_LaB6)
+D_M5_corr_val = scherrer_D(fwhm_M5_corr_val, xc) if np.isfinite(fwhm_M5_corr_val) else np.nan
+
+if len(fwhm_MC_corr) > 1 and np.isfinite(fwhm_M5_corr_val):
+    err_fwhm_M5_corr = np.std(fwhm_MC_corr, ddof=1)
+    err_D_M5_corr = np.std(D_MC_corr, ddof=1)
+else:
+    err_fwhm_M5_corr = np.nan
+    err_D_M5_corr = np.nan
+
+# Guardar los resultados como ufloat para recopilarlos en una tabla
+xc_M5 = ufloat(xc, err_xc)
+fwhm1_M5 = ufloat(fwhm1, err_fwhm1)
+fwhm2_M5 = ufloat(fwhm2, err_fwhm2)
+eta_M5 = ufloat(eta, err_eta)
+ratio_M5 = ufloat(ratio, errores[5])
+D_M5_sin = ufloat(D_M5_sin_val, err_D_M5_sin)
+fwhm_M5_corr = ufloat(fwhm_M5_corr_val, err_fwhm_M5_corr) if np.isfinite(fwhm_M5_corr_val) and np.isfinite(err_fwhm_M5_corr) else ufloat(np.nan, np.nan)
+D_M5_corr = ufloat(D_M5_corr_val, err_D_M5_corr) if np.isfinite(D_M5_corr_val) and np.isfinite(err_D_M5_corr) else ufloat(np.nan, np.nan)
 
 print(f'\nM5 - Scherrer')
-print(f'D sin corrección instrumental = {D_M5_sin:.2f} nm')
-print(f'FWHM Kα₁ corregido = {fwhm_M5_corr:.6f}°')
-print(f'D con corrección instrumental = {D_M5_corr:.2f} nm')
+print(f'2θ Kα₁ = {xc_M5:.2uS}°')
+print(f'FWHM Kα₁ sin corrección = {fwhm1_M5:.2uS}°')
+print(f'D sin corrección instrumental = {D_M5_sin:.1uS} nm')
+print(f'FWHM Kα₁ corregido = {fwhm_M5_corr:.2uS}°')
+print(f'D con corrección instrumental = {D_M5_corr:.1uS} nm')       
 #%% M6 
 peaks_M6, props_M6 = find_peaks(intensity_M6,
                                 prominence=15,
@@ -977,7 +1229,6 @@ print('M6',f'{len(peaks_M6)} picos detectados\n')
 print('indx |  2θ (°) | Intensidad')
 for i,theta,intens in picos_M6:
     print(f'{i:4} | {theta:7.2f} | {intens:7.0f}')   
-
 #%% M6 - Ajuste del doblete Cu Kα para la reflexión (311)
 centro_ref = reflexiones['(311)']
 ventana = 1.1
@@ -1001,7 +1252,7 @@ xp, yp, popt, pcov, modelo = ajustar_doblete(
 
 errores = np.sqrt(np.maximum(np.diag(pcov), 0))
 A, xc, fwhm1, fwhm2, eta, ratio, b0, b1 = popt
-err_xc, err_fwhm1, err_fwhm2 = errores[1], errores[2], errores[3]
+err_xc, err_fwhm1, err_fwhm2, err_eta = errores[1], errores[2], errores[3], errores[4]
 xc2 = posicion_Ka2(xc)
 
 print(f'\nM6 - Reflexión (311)')
@@ -1040,15 +1291,65 @@ ax.grid(alpha=0.25)
 ax.legend()
 plt.show()
 
-# Tamaño de cristalita por Scherrer usando únicamente Kα1
-D_M6_sin = scherrer_D(fwhm1, xc)
-fwhm_M6_corr = corregir_fwhm_instrumental(fwhm1, eta, xc, df_LaB6)
-D_M6_corr = scherrer_D(fwhm_M6_corr, xc) if np.isfinite(fwhm_M6_corr) else np.nan
+# Tamaño de cristalita por Scherrer e incertidumbres por Monte Carlo
+# Se reutilizan rng y N_MC definidos en la celda de M2
+
+# Sin corrección instrumental: muestreo conjunto de 2θ y FWHM Kα1
+media_sin = np.array([xc, fwhm1])
+cov_sin = pcov[np.ix_([1, 2], [1, 2])]
+muestras_sin = rng.multivariate_normal(media_sin, cov_sin, size=N_MC)
+validos_sin = np.isfinite(muestras_sin).all(axis=1) & (muestras_sin[:, 1] > 0)
+xc_MC_sin, fwhm_MC_sin = muestras_sin[validos_sin].T
+D_MC_sin = K*(lambda_X/10)/(np.deg2rad(fwhm_MC_sin)*np.cos(np.deg2rad(xc_MC_sin/2)))
+
+D_M6_sin_val = scherrer_D(fwhm1, xc)
+err_D_M6_sin = np.std(D_MC_sin, ddof=1)
+
+# Corrección instrumental: propagar la covarianza de 2θ, FWHM Kα1 y eta
+media_corr = np.array([xc, fwhm1, eta])
+cov_corr = pcov[np.ix_([1, 2, 4], [1, 2, 4])]
+muestras_corr = rng.multivariate_normal(media_corr, cov_corr, size=N_MC)
+
+fwhm_MC_corr = []
+D_MC_corr = []
+
+for xc_i, fwhm_i, eta_i in muestras_corr:
+    if not np.isfinite([xc_i, fwhm_i, eta_i]).all() or fwhm_i <= 0:
+        continue
+    fwhm_i_corr = corregir_fwhm_instrumental(fwhm_i, eta_i, xc_i, df_LaB6)
+    if not np.isfinite(fwhm_i_corr) or fwhm_i_corr <= 0:
+        continue
+    D_i_corr = scherrer_D(fwhm_i_corr, xc_i)
+    if np.isfinite(D_i_corr):
+        fwhm_MC_corr.append(fwhm_i_corr)
+        D_MC_corr.append(D_i_corr)
+
+fwhm_M6_corr_val = corregir_fwhm_instrumental(fwhm1, eta, xc, df_LaB6)
+D_M6_corr_val = scherrer_D(fwhm_M6_corr_val, xc) if np.isfinite(fwhm_M6_corr_val) else np.nan
+
+if len(fwhm_MC_corr) > 1 and np.isfinite(fwhm_M6_corr_val):
+    err_fwhm_M6_corr = np.std(fwhm_MC_corr, ddof=1)
+    err_D_M6_corr = np.std(D_MC_corr, ddof=1)
+else:
+    err_fwhm_M6_corr = np.nan
+    err_D_M6_corr = np.nan
+
+# Guardar los resultados como ufloat para recopilarlos en una tabla
+xc_M6 = ufloat(xc, err_xc)
+fwhm1_M6 = ufloat(fwhm1, err_fwhm1)
+fwhm2_M6 = ufloat(fwhm2, err_fwhm2)
+eta_M6 = ufloat(eta, err_eta)
+ratio_M6 = ufloat(ratio, errores[5])
+D_M6_sin = ufloat(D_M6_sin_val, err_D_M6_sin)
+fwhm_M6_corr = ufloat(fwhm_M6_corr_val, err_fwhm_M6_corr) if np.isfinite(fwhm_M6_corr_val) and np.isfinite(err_fwhm_M6_corr) else ufloat(np.nan, np.nan)
+D_M6_corr = ufloat(D_M6_corr_val, err_D_M6_corr) if np.isfinite(D_M6_corr_val) and np.isfinite(err_D_M6_corr) else ufloat(np.nan, np.nan)
 
 print(f'\nM6 - Scherrer')
-print(f'D sin corrección instrumental = {D_M6_sin:.2f} nm')
-print(f'FWHM Kα₁ corregido = {fwhm_M6_corr:.6f}°')
-print(f'D con corrección instrumental = {D_M6_corr:.2f} nm')
+print(f'2θ Kα₁ = {xc_M6:.2uS}°')
+print(f'FWHM Kα₁ sin corrección = {fwhm1_M6:.2uS}°')
+print(f'D sin corrección instrumental = {D_M6_sin:.1uS} nm')
+print(f'FWHM Kα₁ corregido = {fwhm_M6_corr:.2uS}°')
+print(f'D con corrección instrumental = {D_M6_corr:.1uS} nm')
 #%% M7 
 peaks_M7, props_M7 = find_peaks(intensity_M7,
                                 prominence=20,
@@ -1076,17 +1377,12 @@ print('M7',f'{len(peaks_M7)} picos detectados\n')
 print('indx |  2θ (°) | Intensidad')
 for i,theta,intens in picos_M7:
     print(f'{i:4} | {theta:7.2f} | {intens:7.0f}')  
-
 #%% M7 - Ajuste del doblete Cu Kα para la reflexión (311)
 centro_ref = reflexiones['(311)']
 ventana = 1.1
 
 # Buscar el máximo detectado más cercano a la reflexión (311)
-candidatos_311 = [
-    (i, theta, intens) for i, theta, intens in picos_M7
-    if abs(theta-centro_ref) <= 0.5
-]
-
+candidatos_311 = [(i, theta, intens) for i, theta, intens in picos_M7 if abs(theta-centro_ref) <= 0.5]
 if not candidatos_311:
     raise ValueError('M7: no se detectó ningún máximo cerca de la reflexión (311). Revisá picos_M7 o la ventana.')
 
@@ -1094,13 +1390,10 @@ indice_pico, xc0, intens0 = min(candidatos_311, key=lambda p: abs(p[1]-centro_re
 print(f'Máximo seleccionado para (311): índice={indice_pico}, 2θ={xc0:.4f}°, intensidad={intens0:.0f}')
 
 # Ajustar el doblete alrededor del máximo detectado
-xp, yp, popt, pcov, modelo = ajustar_doblete(
-    dostheta_M7, intensity_M7, centro_ref=xc0, ventana=ventana
-)
-
+xp, yp, popt, pcov, modelo = ajustar_doblete(dostheta_M7, intensity_M7, centro_ref=xc0, ventana=ventana)
 errores = np.sqrt(np.maximum(np.diag(pcov), 0))
 A, xc, fwhm1, fwhm2, eta, ratio, b0, b1 = popt
-err_xc, err_fwhm1, err_fwhm2 = errores[1], errores[2], errores[3]
+err_xc, err_fwhm1, err_fwhm2, err_eta = errores[1], errores[2], errores[3], errores[4]
 xc2 = posicion_Ka2(xc)
 
 print(f'\nM7 - Reflexión (311)')
@@ -1114,7 +1407,6 @@ print(f'Relación de intensidades Kα₂/Kα₁ = {ratio:.4f}')
 # Diagnóstico del ajuste
 denominador = np.sqrt(pcov[2,2]*pcov[3,3])
 correlacion = pcov[2,3]/denominador if denominador > 0 else np.nan
-
 print(f'\nDiagnóstico del ajuste de M7 (311)')
 print(f'Diferencia FWHM = {fwhm1-fwhm2:.10e}°')
 print(f'Correlación entre FWHM1 y FWHM2 = {correlacion:.6f}')
@@ -1139,15 +1431,58 @@ ax.grid(alpha=0.25)
 ax.legend()
 plt.show()
 
-# Tamaño de cristalita por Scherrer usando únicamente Kα1
-D_M7_sin = scherrer_D(fwhm1, xc)
-fwhm_M7_corr = corregir_fwhm_instrumental(fwhm1, eta, xc, df_LaB6)
-D_M7_corr = scherrer_D(fwhm_M7_corr, xc) if np.isfinite(fwhm_M7_corr) else np.nan
+# Tamaño de cristalita por Scherrer e incertidumbres por Monte Carlo
+media_sin = np.array([xc, fwhm1])
+cov_sin = pcov[np.ix_([1, 2], [1, 2])]
+muestras_sin = rng.multivariate_normal(media_sin, cov_sin, size=N_MC)
+validos_sin = np.isfinite(muestras_sin).all(axis=1) & (muestras_sin[:, 1] > 0)
+xc_MC_sin, fwhm_MC_sin = muestras_sin[validos_sin].T
+D_MC_sin = K*(lambda_X/10)/(np.deg2rad(fwhm_MC_sin)*np.cos(np.deg2rad(xc_MC_sin/2)))
+D_M7_sin_val = scherrer_D(fwhm1, xc)
+err_D_M7_sin = np.std(D_MC_sin, ddof=1)
+
+# Corrección instrumental y propagación por Monte Carlo
+media_corr = np.array([xc, fwhm1, eta])
+cov_corr = pcov[np.ix_([1, 2, 4], [1, 2, 4])]
+muestras_corr = rng.multivariate_normal(media_corr, cov_corr, size=N_MC)
+fwhm_MC_corr, D_MC_corr = [], []
+
+for xc_i, fwhm_i, eta_i in muestras_corr:
+    if not np.isfinite([xc_i, fwhm_i, eta_i]).all() or fwhm_i <= 0:
+        continue
+    fwhm_i_corr = corregir_fwhm_instrumental(fwhm_i, eta_i, xc_i, df_LaB6)
+    if not np.isfinite(fwhm_i_corr) or fwhm_i_corr <= 0:
+        continue
+    D_i_corr = scherrer_D(fwhm_i_corr, xc_i)
+    if np.isfinite(D_i_corr):
+        fwhm_MC_corr.append(fwhm_i_corr)
+        D_MC_corr.append(D_i_corr)
+
+fwhm_M7_corr_val = corregir_fwhm_instrumental(fwhm1, eta, xc, df_LaB6)
+D_M7_corr_val = scherrer_D(fwhm_M7_corr_val, xc) if np.isfinite(fwhm_M7_corr_val) else np.nan
+
+if len(fwhm_MC_corr) > 1 and np.isfinite(fwhm_M7_corr_val):
+    err_fwhm_M7_corr = np.std(fwhm_MC_corr, ddof=1)
+    err_D_M7_corr = np.std(D_MC_corr, ddof=1)
+else:
+    err_fwhm_M7_corr, err_D_M7_corr = np.nan, np.nan
+
+# Guardar los resultados como ufloat
+xc_M7 = ufloat(xc, err_xc)
+fwhm1_M7 = ufloat(fwhm1, err_fwhm1)
+fwhm2_M7 = ufloat(fwhm2, err_fwhm2)
+eta_M7 = ufloat(eta, err_eta)
+ratio_M7 = ufloat(ratio, errores[5])
+D_M7_sin = ufloat(D_M7_sin_val, err_D_M7_sin)
+fwhm_M7_corr = ufloat(fwhm_M7_corr_val, err_fwhm_M7_corr) if np.isfinite(fwhm_M7_corr_val) and np.isfinite(err_fwhm_M7_corr) else ufloat(np.nan, np.nan)
+D_M7_corr = ufloat(D_M7_corr_val, err_D_M7_corr) if np.isfinite(D_M7_corr_val) and np.isfinite(err_D_M7_corr) else ufloat(np.nan, np.nan)
 
 print(f'\nM7 - Scherrer')
-print(f'D sin corrección instrumental = {D_M7_sin:.2f} nm')
-print(f'FWHM Kα₁ corregido = {fwhm_M7_corr:.6f}°')
-print(f'D con corrección instrumental = {D_M7_corr:.2f} nm')
+print(f'2θ Kα₁ = {xc_M7:.2uS}°')
+print(f'FWHM Kα₁ sin corrección = {fwhm1_M7:.2uS}°')
+print(f'D sin corrección instrumental = {D_M7_sin:.1uS} nm')
+print(f'FWHM Kα₁ corregido = {fwhm_M7_corr:.2uS}°')
+print(f'D con corrección instrumental = {D_M7_corr:.1uS} nm')
 #%% M9
 peaks_M9, props_M9 = find_peaks(intensity_M9,
                                 height=30,
@@ -1175,31 +1510,22 @@ ax.set_ylabel('Intensidad (u.a.)')
 print('M9',f'{len(peaks_M9)} picos detectados\n')
 print('indx |  2θ (°) | Intensidad')
 for i,theta,intens in picos_M9:
-    print(f'{i:4} | {theta:7.2f} | {intens:7.0f}')       
+    print(f'{i:4} | {theta:7.2f} | {intens:7.0f}')
 #%% M9 - Ajuste del doblete Cu Kα para la reflexión (311)
 centro_ref = reflexiones['(311)']
 ventana = 1.1
 
-# Buscar el máximo detectado más cercano a la reflexión (311)
-candidatos_311 = [
-    (i, theta, intens) for i, theta, intens in picos_M9
-    if abs(theta-centro_ref) <= 0.5
-]
-
+candidatos_311 = [(i, theta, intens) for i, theta, intens in picos_M9 if abs(theta-centro_ref) <= 0.5]
 if not candidatos_311:
     raise ValueError('M9: no se detectó ningún máximo cerca de la reflexión (311). Revisá picos_M9 o la ventana.')
 
 indice_pico, xc0, intens0 = min(candidatos_311, key=lambda p: abs(p[1]-centro_ref))
 print(f'Máximo seleccionado para (311): índice={indice_pico}, 2θ={xc0:.4f}°, intensidad={intens0:.0f}')
 
-# Ajustar el doblete alrededor del máximo detectado
-xp, yp, popt, pcov, modelo = ajustar_doblete(
-    dostheta_M9, intensity_M9, centro_ref=xc0, ventana=ventana
-)
-
+xp, yp, popt, pcov, modelo = ajustar_doblete(dostheta_M9, intensity_M9, centro_ref=xc0, ventana=ventana)
 errores = np.sqrt(np.maximum(np.diag(pcov), 0))
 A, xc, fwhm1, fwhm2, eta, ratio, b0, b1 = popt
-err_xc, err_fwhm1, err_fwhm2 = errores[1], errores[2], errores[3]
+err_xc, err_fwhm1, err_fwhm2, err_eta = errores[1], errores[2], errores[3], errores[4]
 xc2 = posicion_Ka2(xc)
 
 print(f'\nM9 - Reflexión (311)')
@@ -1210,15 +1536,12 @@ print(f'FWHM Kα₂ = {fwhm2:.6f} ± {err_fwhm2:.6f}°')
 print(f'η = {eta:.4f}')
 print(f'Relación de intensidades Kα₂/Kα₁ = {ratio:.4f}')
 
-# Diagnóstico del ajuste
 denominador = np.sqrt(pcov[2,2]*pcov[3,3])
 correlacion = pcov[2,3]/denominador if denominador > 0 else np.nan
-
 print(f'\nDiagnóstico del ajuste de M9 (311)')
 print(f'Diferencia FWHM = {fwhm1-fwhm2:.10e}°')
 print(f'Correlación entre FWHM1 y FWHM2 = {correlacion:.6f}')
 
-# Gráfico del ajuste y de las componentes
 xfit = np.linspace(xp.min(), xp.max(), 1500)
 fondo = b0 + b1*(xfit-xc)
 perfil1 = A*perfil_pvoigt(xfit, xc, fwhm1, eta)
@@ -1238,15 +1561,55 @@ ax.grid(alpha=0.25)
 ax.legend()
 plt.show()
 
-# Tamaño de cristalita por Scherrer usando únicamente Kα1
-D_M9_sin = scherrer_D(fwhm1, xc)
-fwhm_M9_corr = corregir_fwhm_instrumental(fwhm1, eta, xc, df_LaB6)
-D_M9_corr = scherrer_D(fwhm_M9_corr, xc) if np.isfinite(fwhm_M9_corr) else np.nan
+media_sin = np.array([xc, fwhm1])
+cov_sin = pcov[np.ix_([1, 2], [1, 2])]
+muestras_sin = rng.multivariate_normal(media_sin, cov_sin, size=N_MC)
+validos_sin = np.isfinite(muestras_sin).all(axis=1) & (muestras_sin[:, 1] > 0)
+xc_MC_sin, fwhm_MC_sin = muestras_sin[validos_sin].T
+D_MC_sin = K*(lambda_X/10)/(np.deg2rad(fwhm_MC_sin)*np.cos(np.deg2rad(xc_MC_sin/2)))
+D_M9_sin_val = scherrer_D(fwhm1, xc)
+err_D_M9_sin = np.std(D_MC_sin, ddof=1)
+
+media_corr = np.array([xc, fwhm1, eta])
+cov_corr = pcov[np.ix_([1, 2, 4], [1, 2, 4])]
+muestras_corr = rng.multivariate_normal(media_corr, cov_corr, size=N_MC)
+fwhm_MC_corr, D_MC_corr = [], []
+
+for xc_i, fwhm_i, eta_i in muestras_corr:
+    if not np.isfinite([xc_i, fwhm_i, eta_i]).all() or fwhm_i <= 0:
+        continue
+    fwhm_i_corr = corregir_fwhm_instrumental(fwhm_i, eta_i, xc_i, df_LaB6)
+    if not np.isfinite(fwhm_i_corr) or fwhm_i_corr <= 0:
+        continue
+    D_i_corr = scherrer_D(fwhm_i_corr, xc_i)
+    if np.isfinite(D_i_corr):
+        fwhm_MC_corr.append(fwhm_i_corr)
+        D_MC_corr.append(D_i_corr)
+
+fwhm_M9_corr_val = corregir_fwhm_instrumental(fwhm1, eta, xc, df_LaB6)
+D_M9_corr_val = scherrer_D(fwhm_M9_corr_val, xc) if np.isfinite(fwhm_M9_corr_val) else np.nan
+
+if len(fwhm_MC_corr) > 1 and np.isfinite(fwhm_M9_corr_val):
+    err_fwhm_M9_corr = np.std(fwhm_MC_corr, ddof=1)
+    err_D_M9_corr = np.std(D_MC_corr, ddof=1)
+else:
+    err_fwhm_M9_corr, err_D_M9_corr = np.nan, np.nan
+
+xc_M9 = ufloat(xc, err_xc)
+fwhm1_M9 = ufloat(fwhm1, err_fwhm1)
+fwhm2_M9 = ufloat(fwhm2, err_fwhm2)
+eta_M9 = ufloat(eta, err_eta)
+ratio_M9 = ufloat(ratio, errores[5])
+D_M9_sin = ufloat(D_M9_sin_val, err_D_M9_sin)
+fwhm_M9_corr = ufloat(fwhm_M9_corr_val, err_fwhm_M9_corr) if np.isfinite(fwhm_M9_corr_val) and np.isfinite(err_fwhm_M9_corr) else ufloat(np.nan, np.nan)
+D_M9_corr = ufloat(D_M9_corr_val, err_D_M9_corr) if np.isfinite(D_M9_corr_val) and np.isfinite(err_D_M9_corr) else ufloat(np.nan, np.nan)
 
 print(f'\nM9 - Scherrer')
-print(f'D sin corrección instrumental = {D_M9_sin:.2f} nm')
-print(f'FWHM Kα₁ corregido = {fwhm_M9_corr:.6f}°')
-print(f'D con corrección instrumental = {D_M9_corr:.2f} nm')
+print(f'2θ Kα₁ = {xc_M9:.2uS}°')
+print(f'FWHM Kα₁ sin corrección = {fwhm1_M9:.2uS}°')
+print(f'D sin corrección instrumental = {D_M9_sin:.1uS} nm')
+print(f'FWHM Kα₁ corregido = {fwhm_M9_corr:.2uS}°')
+print(f'D con corrección instrumental = {D_M9_corr:.1uS} nm')       
 #%% M10 
 peaks_M10, props_M10 = find_peaks(intensity_M10,
                                 height=24,
@@ -1279,26 +1642,17 @@ for i,theta,intens in picos_M10:
 centro_ref = reflexiones['(311)']
 ventana = 1.1
 
-# Buscar el máximo detectado más cercano a la reflexión (311)
-candidatos_311 = [
-    (i, theta, intens) for i, theta, intens in picos_M10
-    if abs(theta-centro_ref) <= 0.5
-]
-
+candidatos_311 = [(i, theta, intens) for i, theta, intens in picos_M10 if abs(theta-centro_ref) <= 0.5]
 if not candidatos_311:
     raise ValueError('M10: no se detectó ningún máximo cerca de la reflexión (311). Revisá picos_M10 o la ventana.')
 
 indice_pico, xc0, intens0 = min(candidatos_311, key=lambda p: abs(p[1]-centro_ref))
 print(f'Máximo seleccionado para (311): índice={indice_pico}, 2θ={xc0:.4f}°, intensidad={intens0:.0f}')
 
-# Ajustar el doblete alrededor del máximo detectado
-xp, yp, popt, pcov, modelo = ajustar_doblete(
-    dostheta_M10, intensity_M10, centro_ref=xc0, ventana=ventana
-)
-
+xp, yp, popt, pcov, modelo = ajustar_doblete(dostheta_M10, intensity_M10, centro_ref=xc0, ventana=ventana)
 errores = np.sqrt(np.maximum(np.diag(pcov), 0))
 A, xc, fwhm1, fwhm2, eta, ratio, b0, b1 = popt
-err_xc, err_fwhm1, err_fwhm2 = errores[1], errores[2], errores[3]
+err_xc, err_fwhm1, err_fwhm2, err_eta = errores[1], errores[2], errores[3], errores[4]
 xc2 = posicion_Ka2(xc)
 
 print(f'\nM10 - Reflexión (311)')
@@ -1309,15 +1663,12 @@ print(f'FWHM Kα₂ = {fwhm2:.6f} ± {err_fwhm2:.6f}°')
 print(f'η = {eta:.4f}')
 print(f'Relación de intensidades Kα₂/Kα₁ = {ratio:.4f}')
 
-# Diagnóstico del ajuste
 denominador = np.sqrt(pcov[2,2]*pcov[3,3])
 correlacion = pcov[2,3]/denominador if denominador > 0 else np.nan
-
 print(f'\nDiagnóstico del ajuste de M10 (311)')
 print(f'Diferencia FWHM = {fwhm1-fwhm2:.10e}°')
 print(f'Correlación entre FWHM1 y FWHM2 = {correlacion:.6f}')
 
-# Gráfico del ajuste y de las componentes
 xfit = np.linspace(xp.min(), xp.max(), 1500)
 fondo = b0 + b1*(xfit-xc)
 perfil1 = A*perfil_pvoigt(xfit, xc, fwhm1, eta)
@@ -1337,16 +1688,55 @@ ax.grid(alpha=0.25)
 ax.legend()
 plt.show()
 
-# Tamaño de cristalita por Scherrer usando únicamente Kα1
-D_M10_sin = scherrer_D(fwhm1, xc)
-fwhm_M10_corr = corregir_fwhm_instrumental(fwhm1, eta, xc, df_LaB6)
-D_M10_corr = scherrer_D(fwhm_M10_corr, xc) if np.isfinite(fwhm_M10_corr) else np.nan
+media_sin = np.array([xc, fwhm1])
+cov_sin = pcov[np.ix_([1, 2], [1, 2])]
+muestras_sin = rng.multivariate_normal(media_sin, cov_sin, size=N_MC)
+validos_sin = np.isfinite(muestras_sin).all(axis=1) & (muestras_sin[:, 1] > 0)
+xc_MC_sin, fwhm_MC_sin = muestras_sin[validos_sin].T
+D_MC_sin = K*(lambda_X/10)/(np.deg2rad(fwhm_MC_sin)*np.cos(np.deg2rad(xc_MC_sin/2)))
+D_M10_sin_val = scherrer_D(fwhm1, xc)
+err_D_M10_sin = np.std(D_MC_sin, ddof=1)
+
+media_corr = np.array([xc, fwhm1, eta])
+cov_corr = pcov[np.ix_([1, 2, 4], [1, 2, 4])]
+muestras_corr = rng.multivariate_normal(media_corr, cov_corr, size=N_MC)
+fwhm_MC_corr, D_MC_corr = [], []
+
+for xc_i, fwhm_i, eta_i in muestras_corr:
+    if not np.isfinite([xc_i, fwhm_i, eta_i]).all() or fwhm_i <= 0:
+        continue
+    fwhm_i_corr = corregir_fwhm_instrumental(fwhm_i, eta_i, xc_i, df_LaB6)
+    if not np.isfinite(fwhm_i_corr) or fwhm_i_corr <= 0:
+        continue
+    D_i_corr = scherrer_D(fwhm_i_corr, xc_i)
+    if np.isfinite(D_i_corr):
+        fwhm_MC_corr.append(fwhm_i_corr)
+        D_MC_corr.append(D_i_corr)
+
+fwhm_M10_corr_val = corregir_fwhm_instrumental(fwhm1, eta, xc, df_LaB6)
+D_M10_corr_val = scherrer_D(fwhm_M10_corr_val, xc) if np.isfinite(fwhm_M10_corr_val) else np.nan
+
+if len(fwhm_MC_corr) > 1 and np.isfinite(fwhm_M10_corr_val):
+    err_fwhm_M10_corr = np.std(fwhm_MC_corr, ddof=1)
+    err_D_M10_corr = np.std(D_MC_corr, ddof=1)
+else:
+    err_fwhm_M10_corr, err_D_M10_corr = np.nan, np.nan
+
+xc_M10 = ufloat(xc, err_xc)
+fwhm1_M10 = ufloat(fwhm1, err_fwhm1)
+fwhm2_M10 = ufloat(fwhm2, err_fwhm2)
+eta_M10 = ufloat(eta, err_eta)
+ratio_M10 = ufloat(ratio, errores[5])
+D_M10_sin = ufloat(D_M10_sin_val, err_D_M10_sin)
+fwhm_M10_corr = ufloat(fwhm_M10_corr_val, err_fwhm_M10_corr) if np.isfinite(fwhm_M10_corr_val) and np.isfinite(err_fwhm_M10_corr) else ufloat(np.nan, np.nan)
+D_M10_corr = ufloat(D_M10_corr_val, err_D_M10_corr) if np.isfinite(D_M10_corr_val) and np.isfinite(err_D_M10_corr) else ufloat(np.nan, np.nan)
 
 print(f'\nM10 - Scherrer')
-print(f'D sin corrección instrumental = {D_M10_sin:.2f} nm')
-print(f'FWHM Kα₁ corregido = {fwhm_M10_corr:.6f}°')
-print(f'D con corrección instrumental = {D_M10_corr:.2f} nm')
-
+print(f'2θ Kα₁ = {xc_M10:.2uS}°')
+print(f'FWHM Kα₁ sin corrección = {fwhm1_M10:.2uS}°')
+print(f'D sin corrección instrumental = {D_M10_sin:.1uS} nm')
+print(f'FWHM Kα₁ corregido = {fwhm_M10_corr:.2uS}°')
+print(f'D con corrección instrumental = {D_M10_corr:.1uS} nm')    
 #%%  M11
 peaks_M11, props_M11 = find_peaks(intensity_M11,
                                   height=28,
@@ -1381,26 +1771,17 @@ for i,theta,intens in picos_M11:
 centro_ref = reflexiones['(311)']
 ventana = 1.1
 
-# Buscar el máximo detectado más cercano a la reflexión (311)
-candidatos_311 = [
-    (i, theta, intens) for i, theta, intens in picos_M11
-    if abs(theta-centro_ref) <= 0.5
-]
-
+candidatos_311 = [(i, theta, intens) for i, theta, intens in picos_M11 if abs(theta-centro_ref) <= 0.5]
 if not candidatos_311:
     raise ValueError('M11: no se detectó ningún máximo cerca de la reflexión (311). Revisá picos_M11 o la ventana.')
 
 indice_pico, xc0, intens0 = min(candidatos_311, key=lambda p: abs(p[1]-centro_ref))
 print(f'Máximo seleccionado para (311): índice={indice_pico}, 2θ={xc0:.4f}°, intensidad={intens0:.0f}')
 
-# Ajustar el doblete alrededor del máximo detectado
-xp, yp, popt, pcov, modelo = ajustar_doblete(
-    dostheta_M11, intensity_M11, centro_ref=xc0, ventana=ventana
-)
-
+xp, yp, popt, pcov, modelo = ajustar_doblete(dostheta_M11, intensity_M11, centro_ref=xc0, ventana=ventana)
 errores = np.sqrt(np.maximum(np.diag(pcov), 0))
 A, xc, fwhm1, fwhm2, eta, ratio, b0, b1 = popt
-err_xc, err_fwhm1, err_fwhm2 = errores[1], errores[2], errores[3]
+err_xc, err_fwhm1, err_fwhm2, err_eta = errores[1], errores[2], errores[3], errores[4]
 xc2 = posicion_Ka2(xc)
 
 print(f'\nM11 - Reflexión (311)')
@@ -1411,15 +1792,12 @@ print(f'FWHM Kα₂ = {fwhm2:.6f} ± {err_fwhm2:.6f}°')
 print(f'η = {eta:.4f}')
 print(f'Relación de intensidades Kα₂/Kα₁ = {ratio:.4f}')
 
-# Diagnóstico del ajuste
 denominador = np.sqrt(pcov[2,2]*pcov[3,3])
 correlacion = pcov[2,3]/denominador if denominador > 0 else np.nan
-
 print(f'\nDiagnóstico del ajuste de M11 (311)')
 print(f'Diferencia FWHM = {fwhm1-fwhm2:.10e}°')
 print(f'Correlación entre FWHM1 y FWHM2 = {correlacion:.6f}')
 
-# Gráfico del ajuste y de las componentes
 xfit = np.linspace(xp.min(), xp.max(), 1500)
 fondo = b0 + b1*(xfit-xc)
 perfil1 = A*perfil_pvoigt(xfit, xc, fwhm1, eta)
@@ -1439,16 +1817,55 @@ ax.grid(alpha=0.25)
 ax.legend()
 plt.show()
 
-# Tamaño de cristalita por Scherrer usando únicamente Kα1
-D_M11_sin = scherrer_D(fwhm1, xc)
-fwhm_M11_corr = corregir_fwhm_instrumental(fwhm1, eta, xc, df_LaB6)
-D_M11_corr = scherrer_D(fwhm_M11_corr, xc) if np.isfinite(fwhm_M11_corr) else np.nan
+media_sin = np.array([xc, fwhm1])
+cov_sin = pcov[np.ix_([1, 2], [1, 2])]
+muestras_sin = rng.multivariate_normal(media_sin, cov_sin, size=N_MC)
+validos_sin = np.isfinite(muestras_sin).all(axis=1) & (muestras_sin[:, 1] > 0)
+xc_MC_sin, fwhm_MC_sin = muestras_sin[validos_sin].T
+D_MC_sin = K*(lambda_X/10)/(np.deg2rad(fwhm_MC_sin)*np.cos(np.deg2rad(xc_MC_sin/2)))
+D_M11_sin_val = scherrer_D(fwhm1, xc)
+err_D_M11_sin = np.std(D_MC_sin, ddof=1)
+
+media_corr = np.array([xc, fwhm1, eta])
+cov_corr = pcov[np.ix_([1, 2, 4], [1, 2, 4])]
+muestras_corr = rng.multivariate_normal(media_corr, cov_corr, size=N_MC)
+fwhm_MC_corr, D_MC_corr = [], []
+
+for xc_i, fwhm_i, eta_i in muestras_corr:
+    if not np.isfinite([xc_i, fwhm_i, eta_i]).all() or fwhm_i <= 0:
+        continue
+    fwhm_i_corr = corregir_fwhm_instrumental(fwhm_i, eta_i, xc_i, df_LaB6)
+    if not np.isfinite(fwhm_i_corr) or fwhm_i_corr <= 0:
+        continue
+    D_i_corr = scherrer_D(fwhm_i_corr, xc_i)
+    if np.isfinite(D_i_corr):
+        fwhm_MC_corr.append(fwhm_i_corr)
+        D_MC_corr.append(D_i_corr)
+
+fwhm_M11_corr_val = corregir_fwhm_instrumental(fwhm1, eta, xc, df_LaB6)
+D_M11_corr_val = scherrer_D(fwhm_M11_corr_val, xc) if np.isfinite(fwhm_M11_corr_val) else np.nan
+
+if len(fwhm_MC_corr) > 1 and np.isfinite(fwhm_M11_corr_val):
+    err_fwhm_M11_corr = np.std(fwhm_MC_corr, ddof=1)
+    err_D_M11_corr = np.std(D_MC_corr, ddof=1)
+else:
+    err_fwhm_M11_corr, err_D_M11_corr = np.nan, np.nan
+
+xc_M11 = ufloat(xc, err_xc)
+fwhm1_M11 = ufloat(fwhm1, err_fwhm1)
+fwhm2_M11 = ufloat(fwhm2, err_fwhm2)
+eta_M11 = ufloat(eta, err_eta)
+ratio_M11 = ufloat(ratio, errores[5])
+D_M11_sin = ufloat(D_M11_sin_val, err_D_M11_sin)
+fwhm_M11_corr = ufloat(fwhm_M11_corr_val, err_fwhm_M11_corr) if np.isfinite(fwhm_M11_corr_val) and np.isfinite(err_fwhm_M11_corr) else ufloat(np.nan, np.nan)
+D_M11_corr = ufloat(D_M11_corr_val, err_D_M11_corr) if np.isfinite(D_M11_corr_val) and np.isfinite(err_D_M11_corr) else ufloat(np.nan, np.nan)
 
 print(f'\nM11 - Scherrer')
-print(f'D sin corrección instrumental = {D_M11_sin:.2f} nm')
-print(f'FWHM Kα₁ corregido = {fwhm_M11_corr:.6f}°')
-print(f'D con corrección instrumental = {D_M11_corr:.2f} nm')
-
+print(f'2θ Kα₁ = {xc_M11:.2uS}°')
+print(f'FWHM Kα₁ sin corrección = {fwhm1_M11:.2uS}°')
+print(f'D sin corrección instrumental = {D_M11_sin:.2uS} nm')
+print(f'FWHM Kα₁ corregido = {fwhm_M11_corr:.2uS}°')
+print(f'D con corrección instrumental = {D_M11_corr:.2uS} nm')
 #%% M12 
 peaks_M12, props_M12 = find_peaks(intensity_M12,prominence=25,width=2,distance=50)
 picos_M12 = list(zip(peaks_M12, dostheta_M12[peaks_M12], intensity_M12[peaks_M12]))
@@ -1476,26 +1893,17 @@ for i,theta,intens in picos_M12:
 centro_ref = reflexiones['(311)']
 ventana = 1.1
 
-# Buscar el máximo detectado más cercano a la reflexión (311)
-candidatos_311 = [
-    (i, theta, intens) for i, theta, intens in picos_M12
-    if abs(theta-centro_ref) <= 0.5
-]
-
+candidatos_311 = [(i, theta, intens) for i, theta, intens in picos_M12 if abs(theta-centro_ref) <= 0.5]
 if not candidatos_311:
     raise ValueError('M12: no se detectó ningún máximo cerca de la reflexión (311). Revisá picos_M12 o la ventana.')
 
 indice_pico, xc0, intens0 = min(candidatos_311, key=lambda p: abs(p[1]-centro_ref))
 print(f'Máximo seleccionado para (311): índice={indice_pico}, 2θ={xc0:.4f}°, intensidad={intens0:.0f}')
 
-# Ajustar el doblete alrededor del máximo detectado
-xp, yp, popt, pcov, modelo = ajustar_doblete(
-    dostheta_M12, intensity_M12, centro_ref=xc0, ventana=ventana
-)
-
+xp, yp, popt, pcov, modelo = ajustar_doblete(dostheta_M12, intensity_M12, centro_ref=xc0, ventana=ventana)
 errores = np.sqrt(np.maximum(np.diag(pcov), 0))
 A, xc, fwhm1, fwhm2, eta, ratio, b0, b1 = popt
-err_xc, err_fwhm1, err_fwhm2 = errores[1], errores[2], errores[3]
+err_xc, err_fwhm1, err_fwhm2, err_eta = errores[1], errores[2], errores[3], errores[4]
 xc2 = posicion_Ka2(xc)
 
 print(f'\nM12 - Reflexión (311)')
@@ -1506,15 +1914,12 @@ print(f'FWHM Kα₂ = {fwhm2:.6f} ± {err_fwhm2:.6f}°')
 print(f'η = {eta:.4f}')
 print(f'Relación de intensidades Kα₂/Kα₁ = {ratio:.4f}')
 
-# Diagnóstico del ajuste
 denominador = np.sqrt(pcov[2,2]*pcov[3,3])
 correlacion = pcov[2,3]/denominador if denominador > 0 else np.nan
-
 print(f'\nDiagnóstico del ajuste de M12 (311)')
 print(f'Diferencia FWHM = {fwhm1-fwhm2:.10e}°')
 print(f'Correlación entre FWHM1 y FWHM2 = {correlacion:.6f}')
 
-# Gráfico del ajuste y de las componentes
 xfit = np.linspace(xp.min(), xp.max(), 1500)
 fondo = b0 + b1*(xfit-xc)
 perfil1 = A*perfil_pvoigt(xfit, xc, fwhm1, eta)
@@ -1534,17 +1939,55 @@ ax.grid(alpha=0.25)
 ax.legend()
 plt.show()
 
-# Tamaño de cristalita por Scherrer usando únicamente Kα1
-D_M12_sin = scherrer_D(fwhm1, xc)
-fwhm_M12_corr = corregir_fwhm_instrumental(fwhm1, eta, xc, df_LaB6)
-D_M12_corr = scherrer_D(fwhm_M12_corr, xc) if np.isfinite(fwhm_M12_corr) else np.nan
+media_sin = np.array([xc, fwhm1])
+cov_sin = pcov[np.ix_([1, 2], [1, 2])]
+muestras_sin = rng.multivariate_normal(media_sin, cov_sin, size=N_MC)
+validos_sin = np.isfinite(muestras_sin).all(axis=1) & (muestras_sin[:, 1] > 0)
+xc_MC_sin, fwhm_MC_sin = muestras_sin[validos_sin].T
+D_MC_sin = K*(lambda_X/10)/(np.deg2rad(fwhm_MC_sin)*np.cos(np.deg2rad(xc_MC_sin/2)))
+D_M12_sin_val = scherrer_D(fwhm1, xc)
+err_D_M12_sin = np.std(D_MC_sin, ddof=1)
+
+media_corr = np.array([xc, fwhm1, eta])
+cov_corr = pcov[np.ix_([1, 2, 4], [1, 2, 4])]
+muestras_corr = rng.multivariate_normal(media_corr, cov_corr, size=N_MC)
+fwhm_MC_corr, D_MC_corr = [], []
+
+for xc_i, fwhm_i, eta_i in muestras_corr:
+    if not np.isfinite([xc_i, fwhm_i, eta_i]).all() or fwhm_i <= 0:
+        continue
+    fwhm_i_corr = corregir_fwhm_instrumental(fwhm_i, eta_i, xc_i, df_LaB6)
+    if not np.isfinite(fwhm_i_corr) or fwhm_i_corr <= 0:
+        continue
+    D_i_corr = scherrer_D(fwhm_i_corr, xc_i)
+    if np.isfinite(D_i_corr):
+        fwhm_MC_corr.append(fwhm_i_corr)
+        D_MC_corr.append(D_i_corr)
+
+fwhm_M12_corr_val = corregir_fwhm_instrumental(fwhm1, eta, xc, df_LaB6)
+D_M12_corr_val = scherrer_D(fwhm_M12_corr_val, xc) if np.isfinite(fwhm_M12_corr_val) else np.nan
+
+if len(fwhm_MC_corr) > 1 and np.isfinite(fwhm_M12_corr_val):
+    err_fwhm_M12_corr = np.std(fwhm_MC_corr, ddof=1)
+    err_D_M12_corr = np.std(D_MC_corr, ddof=1)
+else:
+    err_fwhm_M12_corr, err_D_M12_corr = np.nan, np.nan
+
+xc_M12 = ufloat(xc, err_xc)
+fwhm1_M12 = ufloat(fwhm1, err_fwhm1)
+fwhm2_M12 = ufloat(fwhm2, err_fwhm2)
+eta_M12 = ufloat(eta, err_eta)
+ratio_M12 = ufloat(ratio, errores[5])
+D_M12_sin = ufloat(D_M12_sin_val, err_D_M12_sin)
+fwhm_M12_corr = ufloat(fwhm_M12_corr_val, err_fwhm_M12_corr) if np.isfinite(fwhm_M12_corr_val) and np.isfinite(err_fwhm_M12_corr) else ufloat(np.nan, np.nan)
+D_M12_corr = ufloat(D_M12_corr_val, err_D_M12_corr) if np.isfinite(D_M12_corr_val) and np.isfinite(err_D_M12_corr) else ufloat(np.nan, np.nan)
 
 print(f'\nM12 - Scherrer')
-print(f'D sin corrección instrumental = {D_M12_sin:.2f} nm')
-print(f'FWHM Kα₁ corregido = {fwhm_M12_corr:.6f}°')
-print(f'D con corrección instrumental = {D_M12_corr:.2f} nm')
-
-# %% salvo todas las figuras
+print(f'2θ Kα₁ = {xc_M12:.2uS}°')
+print(f'FWHM Kα₁ sin corrección = {fwhm1_M12:.2uS}°')
+print(f'D sin corrección instrumental = {D_M12_sin:.2uS} nm')
+print(f'FWHM Kα₁ corregido = {fwhm_M12_corr:.2uS}°')
+print(f'D con corrección instrumental = {D_M12_corr:.2uS} nm')
 #%% Guardar figuras DRX
 
 fig_LaB6a.savefig('data_DRX/resultados_DRX/LaB6_DRX.png', dpi=300)
@@ -1585,28 +2028,27 @@ fig_M11b.savefig('data_DRX/resultados_DRX/M11_DRX_c_ajustes.png', dpi=300)
 
 fig_M12a.savefig('data_DRX/resultados_DRX/M12_DRX.png', dpi=300)
 fig_M12b.savefig('data_DRX/resultados_DRX/M12_DRX_c_ajustes.png', dpi=300)
-#%%
 #%% Comparación del tamaño de cristalita por muestra
-#%% Comparación del tamaño de cristalita por muestra
-
-#%% Comparación del tamaño de cristalita por muestra
-
-#%% Comparación del tamaño de cristalita por muestra
-#%% Comparación del tamaño de cristalita por muestra
+#%% Comparación del tamaño de cristalita por muestra con incertidumbres
 
 nombres_muestras = ['M1', 'M2', 'M3', 'M4', 'M5', 'M6', 'M7', 'M9', 'M10', 'M11', 'M12']
 
 D_sin = np.array([D_M1_sin, D_M2_sin, D_M3_sin, D_M4_sin, D_M5_sin, D_M6_sin, D_M7_sin, D_M9_sin, D_M10_sin, D_M11_sin, D_M12_sin])
 D_corr = np.array([D_M1_corr, D_M2_corr, D_M3_corr, D_M4_corr, D_M5_corr, D_M6_corr, D_M7_corr, D_M9_corr, D_M10_corr, D_M11_corr, D_M12_corr])
 
+D_sin_val = np.array([d.nominal_value for d in D_sin])
+D_sin_err = np.array([d.std_dev for d in D_sin])
+D_corr_val = np.array([d.nominal_value for d in D_corr])
+D_corr_err = np.array([d.std_dev for d in D_corr])
+
 x = np.arange(len(nombres_muestras))
 ancho = 0.35
 
 fig_comparacion_cristalitas, ax = plt.subplots(figsize=(11, 5), constrained_layout=True)
 
-ax.bar(x-ancho/2, D_sin, width=ancho, color='tab:blue', label='Sin corrección instrumental')
-ax.bar(x+ancho/2, D_corr, width=ancho, color='tab:orange', label='Con corrección instrumental')
-
+ax.bar(x-ancho/2, D_sin_val, width=ancho,  capsize=4, color='tab:blue', label='Sin corrección instrumental', error_kw={'elinewidth': 1.2})
+ax.bar(x+ancho/2, D_corr_val, width=ancho, capsize=4, color='tab:orange', label='Con corrección instrumental', error_kw={'elinewidth': 1.2})
+# yerr=D_corr_err, yerr=D_sin_err,
 ax.set_xticks(x)
 ax.set_xticklabels(nombres_muestras)
 ax.set_xlabel('Muestra')
@@ -1615,147 +2057,29 @@ ax.set_title('Tamaño de cristalita por muestra')
 ax.grid(axis='y')
 ax.set_axisbelow(True)
 ax.legend()
+
 plt.show()
 fig_comparacion_cristalitas.savefig('data_DRX/resultados_DRX/comparacion_tamano_cristalita.png', dpi=300)
-#%% Exportar resumen de tamaños de cristalita
-
-df_cristalitas = pd.DataFrame(resultados_cristalita)
-
-df_cristalitas.to_csv(
-    'Resultados_cristalitas_Scherrer.txt',
-    sep='\t',
-    index=False,
-    float_format='%.4f'
-)
-
-print('\nResultados de tamaños de cristalita:')
-print(df_cristalitas.to_string(index=False, float_format=lambda x: f'{x:.4f}'))
-print('\nArchivo guardado: Resultados_cristalitas_Scherrer.txt')
-
 # %%
-#%% Tamaño medio de cristalita por muestra
-muestras = ['M1','M2','M3','M4','M5','M6','M7','M9','M10','M11','M12']
+#%% Tabla resumen de tamaños de cristalita por Scherrer
 
-resumenes_sin = [resumen_M1_sin,resumen_M2_sin,resumen_M3_sin,resumen_M4_sin,
-                 resumen_M5_sin,resumen_M6_sin,resumen_M7_sin,resumen_M9_sin,
-                 resumen_M10_sin,resumen_M11_sin,resumen_M12_sin]
-resumenes_con = [resumen_M1_con,resumen_M2_con,resumen_M3_con,resumen_M4_con,
-                 resumen_M5_con,resumen_M6_con,resumen_M7_con,resumen_M9_con,
-                 resumen_M10_con,resumen_M11_con,resumen_M12_con]
+nombres_muestras = ['M1', 'M2', 'M3', 'M4', 'M5', 'M6', 'M7', 'M9', 'M10', 'M11', 'M12']
 
-D_sin = np.array([r['D medio (nm)'] for r in resumenes_sin])
-std_sin = np.array([r['Desviación estándar (nm)'] for r in resumenes_sin])
-D_con = np.array([r['D medio (nm)'] for r in resumenes_con])
-std_con = np.array([r['Desviación estándar (nm)'] for r in resumenes_con])
+FWHM_sin = np.array([fwhm1_M1, fwhm1_M2, fwhm1_M3, fwhm1_M4, fwhm1_M5, fwhm1_M6, fwhm1_M7, fwhm1_M9, fwhm1_M10, fwhm1_M11, fwhm1_M12])
+FWHM_corr = np.array([fwhm_M1_corr, fwhm_M2_corr, fwhm_M3_corr, fwhm_M4_corr, fwhm_M5_corr, fwhm_M6_corr, fwhm_M7_corr, fwhm_M9_corr, fwhm_M10_corr, fwhm_M11_corr, fwhm_M12_corr])
 
+D_sin = np.array([D_M1_sin, D_M2_sin, D_M3_sin, D_M4_sin, D_M5_sin, D_M6_sin, D_M7_sin, D_M9_sin, D_M10_sin, D_M11_sin, D_M12_sin])
+D_corr = np.array([D_M1_corr, D_M2_corr, D_M3_corr, D_M4_corr, D_M5_corr, D_M6_corr, D_M7_corr, D_M9_corr, D_M10_corr, D_M11_corr, D_M12_corr])
 
-#%% Promedio conjunto del tamaño de cristalita por grupos de muestras
-resumenes_sin = {
-    'M1': resumen_M1_sin, 'M2': resumen_M2_sin, 'M3': resumen_M3_sin,
-    'M4': resumen_M4_sin, 'M5': resumen_M5_sin, 'M6': resumen_M6_sin,
-    'M7': resumen_M7_sin, 'M9': resumen_M9_sin, 'M10': resumen_M10_sin,
-    'M11': resumen_M11_sin, 'M12': resumen_M12_sin
-}
-resumenes_con = {
-    'M1': resumen_M1_con, 'M2': resumen_M2_con, 'M3': resumen_M3_con,
-    'M4': resumen_M4_con, 'M5': resumen_M5_con, 'M6': resumen_M6_con,
-    'M7': resumen_M7_con, 'M9': resumen_M9_con, 'M10': resumen_M10_con,
-    'M11': resumen_M11_con, 'M12': resumen_M12_con
-}
+df_cristalitas = pd.DataFrame({
+    'FWHM sin corr (°)': [f'{v:.2uS}' for v in FWHM_sin],
+    'Tamaño sin corr (nm)': [f'{v:.2uS}' for v in D_sin],
+    'FWHM con corr (°)': [f'{v:.2uS}' for v in FWHM_corr],
+    'Tamaño con corr (nm)': [f'{v:.2uS}' for v in D_corr]
+}, index=nombres_muestras)
 
-grupos = {
-    'M1-M10': ['M1','M2','M3','M4','M5','M6','M7','M9','M10'],
-    'M11-M12': ['M11','M12']
-}
+df_cristalitas.index.name = 'Muestra'
+display(df_cristalitas)
 
-def promedio_grupo(nombres, resumenes):
-    D = np.array([resumenes[m]['D medio (nm)'] for m in nombres], dtype=float)
-    err = np.array([resumenes[m]['Incertidumbre (nm)'] for m in nombres], dtype=float)
-    validos = np.isfinite(D) & np.isfinite(err) & (err > 0) & (D > 0)
-    D, err = D[validos], err[validos]
-    if len(D) < 2:
-        raise ValueError('Se necesitan al menos dos muestras válidas')
-    pesos = 1/err**2
-    D_medio = np.sum(pesos*D)/np.sum(pesos)
-    err_estadistico = np.sqrt(1/np.sum(pesos))
-    chi2_red = np.sum(((D-D_medio)/err)**2)/(len(D)-1)
-    err_final = err_estadistico*np.sqrt(max(chi2_red, 1))
-    return {
-        'D medio (nm)': D_medio,
-        'Incertidumbre (nm)': err_final,
-        'Error ponderado sin inflar (nm)': err_estadistico,
-        'Desv. estándar entre muestras (nm)': np.std(D, ddof=1),
-        'chi2 reducido': chi2_red,
-        'N muestras': len(D)
-    }
-
-resultados_grupos = []
-for nombre_grupo, nombres in grupos.items():
-    for correccion, resumenes in [('Sin corrección', resumenes_sin),
-                                  ('Con corrección LaB6', resumenes_con)]:
-        r = promedio_grupo(nombres, resumenes)
-        resultados_grupos.append({
-            'Grupo': nombre_grupo,
-            'Corrección': correccion,
-            **r
-        })
-
-tabla_grupos = pd.DataFrame(resultados_grupos)
-display(tabla_grupos.round(2))
+df_cristalitas.to_csv('data_DRX/tabla_tamano_cristalita.csv', sep=';', decimal=',')
 # %%
-
-fig_DRX_resumen, ax = plt.subplots(figsize=(11,5), constrained_layout=True)
-x = np.arange(len(muestras))
-
-media_sin, desv_sin = np.mean(D_sin[:-2]), np.std(D_sin[:-2],ddof=1)
-media_con, desv_con = np.mean(D_con[:-2]), np.std(D_con[:-2],ddof=1)
-
-media2_sin, desv2_sin = np.mean(D_sin[-2:]), np.std(D_sin[-2:],ddof=1)
-media2_con, desv2_con = np.mean(D_con[-2:]), np.std(D_con[-2:],ddof=1)
-
-ax.errorbar(x-0.08,D_sin,yerr=std_sin,fmt='o',capsize=4,
-            lw=1.2,ms=6,label='Sin corrección instrumental')
-ax.errorbar(x+0.08,D_con,yerr=std_con,fmt='s',capsize=4,
-            lw=1.2,ms=6,label='Con corrección LaB$_6$')
-
-ax.axhspan(media_sin-desv_sin,media_sin+desv_sin,color='C0',alpha=0.2)
-ax.axhline(media_sin,color='C0',ls='--',lw=1.5, label=f'Sin corrección: {media_sin:.1f} ± {desv_sin:.1f} nm')
-
-ax.axhspan(media_con-desv_con,media_con+desv_con,color='C1',alpha=0.2)
-ax.axhline(media_con,color='C1',ls='--',lw=1.5,label=f'Con corrección LaB$_6$: {media_con:.1f} ± {desv_con:.1f} nm')
-
-ax.axhspan(media2_sin-desv_sin,media2_sin+desv_sin,color='C0',alpha=0.2)
-ax.axhline(media2_sin,color='C0',ls='-.',lw=1.5,
-           label=f'Sin corrección: {media2_sin:.1f} ± {desv_sin:.1f} nm')
-
-ax.axhspan(media2_con-desv_con,media2_con+desv_con,color='C1',alpha=0.2)
-ax.axhline(media2_con,color='C1',ls='-.',lw=1.5,
-           label=f'Con corrección LaB$_6$: {media2_con:.1f} ± {desv_con:.1f} nm')
-
-
-ax.set_xticks(x)
-ax.set_xticklabels(muestras)
-ax.set_xlabel('Muestra')
-ax.set_ylabel('Tamaño medio de cristalita, $D$ (nm)')
-ax.set_title('Tamaño medio de cristalita por DRX')
-ax.set_ylim(0,None)
-ax.grid(axis='y',alpha=0.3)
-ax.legend(ncol=3)
-plt.savefig('data_DRX/resultados_DRX/tamaño_vs_muestra.png',dpi=300)
-plt.show()
-#%% Williamson-Hall para todas las muestras
-tablas_DRX = {
-    'M1': tabla_M1, 'M2': tabla_M2, 'M3': tabla_M3,
-    'M4': tabla_M4, 'M5': tabla_M5, 'M6': tabla_M6,
-    'M7': tabla_M7, 'M9': tabla_M9, 'M10': tabla_M10,
-    'M11': tabla_M11, 'M12': tabla_M12}
-
-resultados_WH_sin = {}
-resultados_WH_con = {}
-
-for nombre, tabla in tablas_DRX.items():
-    resultados_WH_sin[nombre] = williamson_hall(
-        tabla, nombre, 'FWHM sin (°)', 'Error FWHM sin (°)')
-    resultados_WH_con[nombre] = williamson_hall(
-        tabla, nombre, 'FWHM con (°)', 'Error FWHM con (°)')
-#%%

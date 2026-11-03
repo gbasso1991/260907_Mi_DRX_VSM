@@ -480,7 +480,7 @@ reflexiones = {
     '(444)': 79.0}
 
 #%% Patrón de calibración LaB6
-data_LaB6 = np.loadtxt('data_DRX/LAB6PHI2.ASC', skiprows=0)
+data_LaB6 = np.loadtxt('LAB6PHI2.ASC', skiprows=0)
 dostheta_LaB6 = data_LaB6[:, 0]
 intensity_LaB6 = data_LaB6[:, 1]
 
@@ -834,17 +834,17 @@ print(f'Referencia NIST SRM 660c = {a_ref_LaB6:.6f} Å')
 print(f'Diferencia relativa = {(df_LaB6["a (Å)"].mean()/a_ref_LaB6-1)*100:.4f} %')
 
 #%% Importo Data
-data_M1 = np.loadtxt('data_DRX/M01.ASC', skiprows=0)
-data_M2 = np.loadtxt('data_DRX/M02.ASC', skiprows=0)
-data_M3 = np.loadtxt('data_DRX/M03.ASC', skiprows=0)
-data_M4 = np.loadtxt('data_DRX/M04.ASC', skiprows=0)
-data_M5 = np.loadtxt('data_DRX/M05.ASC', skiprows=0)
-data_M6 = np.loadtxt('data_DRX/M06.ASC', skiprows=0)
-data_M7 = np.loadtxt('data_DRX/M07.ASC', skiprows=0)
-data_M9 = np.loadtxt('data_DRX/M09.ASC', skiprows=0)
-data_M10 = np.loadtxt('data_DRX/M10.ASC', skiprows=0)
-data_M11 = np.loadtxt('data_DRX/M11.ASC', skiprows=0)
-data_M12 = np.loadtxt('data_DRX/M12.ASC', skiprows=0)
+data_M1 = np.loadtxt('M01.ASC', skiprows=0)
+data_M2 = np.loadtxt('M02.ASC', skiprows=0)
+data_M3 = np.loadtxt('M03.ASC', skiprows=0)
+data_M4 = np.loadtxt('M04.ASC', skiprows=0)
+data_M5 = np.loadtxt('M05.ASC', skiprows=0)
+data_M6 = np.loadtxt('M06.ASC', skiprows=0)
+data_M7 = np.loadtxt('M07.ASC', skiprows=0)
+data_M9 = np.loadtxt('M09.ASC', skiprows=0)
+data_M10 = np.loadtxt('M10.ASC', skiprows=0)
+data_M11 = np.loadtxt('M11.ASC', skiprows=0)
+data_M12 = np.loadtxt('M12.ASC', skiprows=0)
 
 dostheta_M1 = data_M1[:, 0]
 intensity_M1 = data_M1[:, 1]
@@ -1344,54 +1344,54 @@ resultados_cristalita.append({
     'N reflexiones con': resumen_M12_con['N reflexiones']
 })
 # %% salvo todas las figuras
-fig_LaB6a.savefig('data_DRX/LaB6_DRX',dpi=300)
-fig_LaB6b.savefig('data_DRX/LaB6_DRX_c_picos',dpi=300)
-fig_LaB6c.savefig('data_DRX/LaB6_perfil_exp',dpi=300)
-fig_Lab6_perfil.savefig('data_DRX/LaB6_perfil',dpi=300)
-fig_all.savefig('data_DRX/DRX_M1_M2_M3_M4_M5_M6_M7_M9_M10_M11_M12.png')
-fig_M1a.savefig('data_DRX/M1_DRX',dpi=300)
-fig_M1b.savefig('data_DRX/M1_DRX_c_ajustes',dpi=300)
-fig_M1c.savefig('data_DRX/M1_tamaño_cristalita',dpi=300)
+# fig_LaB6a.savefig('data_DRX/LaB6_DRX',dpi=300)
+# fig_LaB6b.savefig('data_DRX/LaB6_DRX_c_picos',dpi=300)
+# fig_LaB6c.savefig('data_DRX/LaB6_perfil_exp',dpi=300)
+# fig_Lab6_perfil.savefig('data_DRX/LaB6_perfil',dpi=300)
+# fig_all.savefig('data_DRX/DRX_M1_M2_M3_M4_M5_M6_M7_M9_M10_M11_M12.png')
+# fig_M1a.savefig('data_DRX/M1_DRX',dpi=300)
+# fig_M1b.savefig('data_DRX/M1_DRX_c_ajustes',dpi=300)
+# fig_M1c.savefig('data_DRX/M1_tamaño_cristalita',dpi=300)
 
-fig_M2a.savefig('data_DRX/M2_DRX',dpi=300)
-fig_M2b.savefig('data_DRX/M2_DRX_c_ajustes',dpi=300)
-fig_M2c.savefig('data_DRX/M2_tamaño_cristalita',dpi=300)
+# fig_M2a.savefig('data_DRX/M2_DRX',dpi=300)
+# fig_M2b.savefig('data_DRX/M2_DRX_c_ajustes',dpi=300)
+# fig_M2c.savefig('data_DRX/M2_tamaño_cristalita',dpi=300)
 
-fig_M3a.savefig('data_DRX/M3_DRX',dpi=300)
-fig_M3b.savefig('data_DRX/M3_DRX_c_ajustes',dpi=300)
-fig_M3c.savefig('data_DRX/M3_tamaño_cristalita',dpi=300)
+# fig_M3a.savefig('data_DRX/M3_DRX',dpi=300)
+# fig_M3b.savefig('data_DRX/M3_DRX_c_ajustes',dpi=300)
+# fig_M3c.savefig('data_DRX/M3_tamaño_cristalita',dpi=300)
 
-fig_M4a.savefig('data_DRX/M4_DRX',dpi=300)
-fig_M4b.savefig('data_DRX/M4_DRX_c_ajustes',dpi=300)
-fig_M4c.savefig('data_DRX/M4_tamaño_cristalita',dpi=300)
+# fig_M4a.savefig('data_DRX/M4_DRX',dpi=300)
+# fig_M4b.savefig('data_DRX/M4_DRX_c_ajustes',dpi=300)
+# fig_M4c.savefig('data_DRX/M4_tamaño_cristalita',dpi=300)
 
-fig_M5a.savefig('data_DRX/M5_DRX',dpi=300)
-fig_M5b.savefig('data_DRX/M5_DRX_c_ajustes',dpi=300)
-fig_M5c.savefig('data_DRX/M5_tamaño_cristalita',dpi=300)
+# fig_M5a.savefig('data_DRX/M5_DRX',dpi=300)
+# fig_M5b.savefig('data_DRX/M5_DRX_c_ajustes',dpi=300)
+# fig_M5c.savefig('data_DRX/M5_tamaño_cristalita',dpi=300)
 
-fig_M6a.savefig('data_DRX/M6_DRX',dpi=300)
-fig_M6b.savefig('data_DRX/M6_DRX_c_ajustes',dpi=300)
-fig_M6c.savefig('data_DRX/M6_tamaño_cristalita',dpi=300)
+# fig_M6a.savefig('data_DRX/M6_DRX',dpi=300)
+# fig_M6b.savefig('data_DRX/M6_DRX_c_ajustes',dpi=300)
+# fig_M6c.savefig('data_DRX/M6_tamaño_cristalita',dpi=300)
 
-fig_M7a.savefig('data_DRX/M7_DRX',dpi=300)
-fig_M7b.savefig('data_DRX/M7_DRX_c_ajustes',dpi=300)
-fig_M7c.savefig('data_DRX/M7_tamaño_cristalita',dpi=300)
+# fig_M7a.savefig('data_DRX/M7_DRX',dpi=300)
+# fig_M7b.savefig('data_DRX/M7_DRX_c_ajustes',dpi=300)
+# fig_M7c.savefig('data_DRX/M7_tamaño_cristalita',dpi=300)
 
-fig_M9a.savefig('data_DRX/M9_DRX',dpi=300)
-fig_M9b.savefig('data_DRX/M9_DRX_c_ajustes',dpi=300)
-fig_M9c.savefig('data_DRX/M9_tamaño_cristalita',dpi=300)
+# fig_M9a.savefig('data_DRX/M9_DRX',dpi=300)
+# fig_M9b.savefig('data_DRX/M9_DRX_c_ajustes',dpi=300)
+# fig_M9c.savefig('data_DRX/M9_tamaño_cristalita',dpi=300)
 
-fig_M10a.savefig('data_DRX/M10_DRX',dpi=300)
-fig_M10b.savefig('data_DRX/M10_DRX_c_ajustes',dpi=300)
-fig_M10c.savefig('data_DRX/M10_tamaño_cristalita',dpi=300)
+# fig_M10a.savefig('data_DRX/M10_DRX',dpi=300)
+# fig_M10b.savefig('data_DRX/M10_DRX_c_ajustes',dpi=300)
+# fig_M10c.savefig('data_DRX/M10_tamaño_cristalita',dpi=300)
 
-fig_M11a.savefig('data_DRX/M11_DRX',dpi=300)
-fig_M11b.savefig('data_DRX/M11_DRX_c_ajustes',dpi=300)
-fig_M11c.savefig('data_DRX/M11_tamaño_cristalita',dpi=300)
+# fig_M11a.savefig('data_DRX/M11_DRX',dpi=300)
+# fig_M11b.savefig('data_DRX/M11_DRX_c_ajustes',dpi=300)
+# fig_M11c.savefig('data_DRX/M11_tamaño_cristalita',dpi=300)
 
-fig_M12a.savefig('data_DRX/M12_DRX',dpi=300)
-fig_M12b.savefig('data_DRX/M12_DRX_c_ajustes',dpi=300)
-fig_M12c.savefig('data_DRX/M12_tamaño_cristalita',dpi=300)
+# fig_M12a.savefig('data_DRX/M12_DRX',dpi=300)
+# fig_M12b.savefig('data_DRX/M12_DRX_c_ajustes',dpi=300)
+# fig_M12c.savefig('data_DRX/M12_tamaño_cristalita',dpi=300)
 
 #%%
 #%% Exportar resumen de tamaños de cristalita
@@ -1406,7 +1406,7 @@ df_cristalitas.to_csv(
 )
 
 print('\nResultados de tamaños de cristalita:')
-print(df_cristalitas.to_string(index=False, float_format=lambda x: f'{x:.4f}'))
+print(df_cristalitas.to_string(index=False, float_format=lambda x: f'{x:.1f}'))
 print('\nArchivo guardado: Resultados_cristalitas_Scherrer.txt')
 
 # %%
@@ -1518,7 +1518,7 @@ ax.set_title('Tamaño medio de cristalita por DRX')
 ax.set_ylim(0,None)
 ax.grid(axis='y',alpha=0.3)
 ax.legend(ncol=3)
-plt.savefig('data_DRX/tamaño_vs_muestra.png',dpi=300)
+plt.savefig('tamaño_vs_muestra.png',dpi=300)
 plt.show()
 #%% Williamson-Hall para todas las muestras
 tablas_DRX = {

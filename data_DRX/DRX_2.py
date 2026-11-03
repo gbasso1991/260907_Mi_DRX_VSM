@@ -34,7 +34,7 @@ reflexiones = {
     '(444)': 79.0}
 
 #%% Patrón de calibración LaB6
-data_LaB6 = np.loadtxt('data_DRX/resultados_DRX/LAB6PHI2.ASC', skiprows=0)
+data_LaB6 = np.loadtxt('LAB6PHI2.ASC', skiprows=0)
 dostheta_LaB6 = data_LaB6[:, 0]
 intensity_LaB6 = data_LaB6[:, 1]
 #%%% pseudovoigt_fondo
@@ -393,17 +393,17 @@ def incertidumbre_scherrer_MC(xc, fwhm, pcov, N_MC=100_000, rng=None):
     D_MC = K*(lambda_X/10)/(beta_MC*np.cos(theta_MC))
     return np.std(D_MC, ddof=1)
 #%% Importo Data
-data_M1 = np.loadtxt('data_DRX/M01.ASC', skiprows=0)
-data_M2 = np.loadtxt('data_DRX/M02.ASC', skiprows=0)
-data_M3 = np.loadtxt('data_DRX/M03.ASC', skiprows=0)
-data_M4 = np.loadtxt('data_DRX/M04.ASC', skiprows=0)
-data_M5 = np.loadtxt('data_DRX/M05.ASC', skiprows=0)
-data_M6 = np.loadtxt('data_DRX/M06.ASC', skiprows=0)
-data_M7 = np.loadtxt('data_DRX/M07.ASC', skiprows=0)
-data_M9 = np.loadtxt('data_DRX/M09.ASC', skiprows=0)
-data_M10 = np.loadtxt('data_DRX/M10.ASC', skiprows=0)
-data_M11 = np.loadtxt('data_DRX/M11.ASC', skiprows=0)
-data_M12 = np.loadtxt('data_DRX/M12.ASC', skiprows=0)
+data_M1 = np.loadtxt('M01.ASC', skiprows=0)
+data_M2 = np.loadtxt('M02.ASC', skiprows=0)
+data_M3 = np.loadtxt('M03.ASC', skiprows=0)
+data_M4 = np.loadtxt('M04.ASC', skiprows=0)
+data_M5 = np.loadtxt('M05.ASC', skiprows=0)
+data_M6 = np.loadtxt('M06.ASC', skiprows=0)
+data_M7 = np.loadtxt('M07.ASC', skiprows=0)
+data_M9 = np.loadtxt('M09.ASC', skiprows=0)
+data_M10 = np.loadtxt('M10.ASC', skiprows=0)
+data_M11 = np.loadtxt('M11.ASC', skiprows=0)
+data_M12 = np.loadtxt('M12.ASC', skiprows=0)
 
 dostheta_M1 = data_M1[:, 0]
 intensity_M1 = data_M1[:, 1]
@@ -1990,44 +1990,44 @@ print(f'FWHM Kα₁ corregido = {fwhm_M12_corr:.2uS}°')
 print(f'D con corrección instrumental = {D_M12_corr:.2uS} nm')
 #%% Guardar figuras DRX
 
-fig_LaB6a.savefig('data_DRX/resultados_DRX/LaB6_DRX.png', dpi=300)
-fig_LaB6b.savefig('data_DRX/resultados_DRX/LaB6_DRX_c_picos.png', dpi=300)
-fig_LaB6c.savefig('data_DRX/resultados_DRX/LaB6_perfil_exp.png', dpi=300)
-fig_Lab6_perfil.savefig('data_DRX/resultados_DRX/LaB6_perfil.png', dpi=300)
-fig_all.savefig('data_DRX/resultados_DRX/DRX_M1_M2_M3_M4_M5_M6_M7_M9_M10_M11_M12.png', dpi=300)
+fig_LaB6a.savefig('resultados_DRX/LaB6_DRX.png', dpi=300)
+fig_LaB6b.savefig('resultados_DRX/LaB6_DRX_c_picos.png', dpi=300)
+fig_LaB6c.savefig('resultados_DRX/LaB6_perfil_exp.png', dpi=300)
+fig_Lab6_perfil.savefig('resultados_DRX/LaB6_perfil.png', dpi=300)
+fig_all.savefig('resultados_DRX/DRX_M1_M2_M3_M4_M5_M6_M7_M9_M10_M11_M12.png', dpi=300)
 
-fig_M1a.savefig('data_DRX/resultados_DRX/M1_DRX.png', dpi=300)
-fig_M1b.savefig('data_DRX/resultados_DRX/M1_DRX_c_ajustes.png', dpi=300)
+fig_M1a.savefig('resultados_DRX/M1_DRX.png', dpi=300)
+fig_M1b.savefig('resultados_DRX/M1_DRX_c_ajustes.png', dpi=300)
 
-fig_M2a.savefig('data_DRX/resultados_DRX/M2_DRX.png', dpi=300)
-fig_M2b.savefig('data_DRX/resultados_DRX/M2_DRX_c_ajustes.png', dpi=300)
+fig_M2a.savefig('resultados_DRX/M2_DRX.png', dpi=300)
+fig_M2b.savefig('resultados_DRX/M2_DRX_c_ajustes.png', dpi=300)
 
-fig_M3a.savefig('data_DRX/resultados_DRX/M3_DRX.png', dpi=300)
-fig_M3b.savefig('data_DRX/resultados_DRX/M3_DRX_c_ajustes.png', dpi=300)
+fig_M3a.savefig('resultados_DRX/M3_DRX.png', dpi=300)
+fig_M3b.savefig('resultados_DRX/M3_DRX_c_ajustes.png', dpi=300)
 
-fig_M4a.savefig('data_DRX/resultados_DRX/M4_DRX.png', dpi=300)
-fig_M4b.savefig('data_DRX/resultados_DRX/M4_DRX_c_ajustes.png', dpi=300)
+fig_M4a.savefig('resultados_DRX/M4_DRX.png', dpi=300)
+fig_M4b.savefig('resultados_DRX/M4_DRX_c_ajustes.png', dpi=300)
 
-fig_M5a.savefig('data_DRX/resultados_DRX/M5_DRX.png', dpi=300)
-fig_M5b.savefig('data_DRX/resultados_DRX/M5_DRX_c_ajustes.png', dpi=300)
+fig_M5a.savefig('resultados_DRX/M5_DRX.png', dpi=300)
+fig_M5b.savefig('resultados_DRX/M5_DRX_c_ajustes.png', dpi=300)
 
-fig_M6a.savefig('data_DRX/resultados_DRX/M6_DRX.png', dpi=300)
-fig_M6b.savefig('data_DRX/resultados_DRX/M6_DRX_c_ajustes.png', dpi=300)
+fig_M6a.savefig('resultados_DRX/M6_DRX.png', dpi=300)
+fig_M6b.savefig('resultados_DRX/M6_DRX_c_ajustes.png', dpi=300)
 
-fig_M7a.savefig('data_DRX/resultados_DRX/M7_DRX.png', dpi=300)
-fig_M7b.savefig('data_DRX/resultados_DRX/M7_DRX_c_ajustes.png', dpi=300)
+fig_M7a.savefig('resultados_DRX/M7_DRX.png', dpi=300)
+fig_M7b.savefig('resultados_DRX/M7_DRX_c_ajustes.png', dpi=300)
 
-fig_M9a.savefig('data_DRX/resultados_DRX/M9_DRX.png', dpi=300)
-fig_M9b.savefig('data_DRX/resultados_DRX/M9_DRX_c_ajustes.png', dpi=300)
+fig_M9a.savefig('resultados_DRX/M9_DRX.png', dpi=300)
+fig_M9b.savefig('resultados_DRX/M9_DRX_c_ajustes.png', dpi=300)
 
-fig_M10a.savefig('data_DRX/resultados_DRX/M10_DRX.png', dpi=300)
-fig_M10b.savefig('data_DRX/resultados_DRX/M10_DRX_c_ajustes.png', dpi=300)
+fig_M10a.savefig('resultados_DRX/M10_DRX.png', dpi=300)
+fig_M10b.savefig('resultados_DRX/M10_DRX_c_ajustes.png', dpi=300)
 
-fig_M11a.savefig('data_DRX/resultados_DRX/M11_DRX.png', dpi=300)
-fig_M11b.savefig('data_DRX/resultados_DRX/M11_DRX_c_ajustes.png', dpi=300)
+fig_M11a.savefig('resultados_DRX/M11_DRX.png', dpi=300)
+fig_M11b.savefig('resultados_DRX/M11_DRX_c_ajustes.png', dpi=300)
 
-fig_M12a.savefig('data_DRX/resultados_DRX/M12_DRX.png', dpi=300)
-fig_M12b.savefig('data_DRX/resultados_DRX/M12_DRX_c_ajustes.png', dpi=300)
+fig_M12a.savefig('resultados_DRX/M12_DRX.png', dpi=300)
+fig_M12b.savefig('resultados_DRX/M12_DRX_c_ajustes.png', dpi=300)
 #%% Comparación del tamaño de cristalita por muestra
 #%% Comparación del tamaño de cristalita por muestra con incertidumbres
 
@@ -2059,7 +2059,7 @@ ax.set_axisbelow(True)
 ax.legend()
 
 plt.show()
-fig_comparacion_cristalitas.savefig('data_DRX/resultados_DRX/comparacion_tamano_cristalita.png', dpi=300)
+fig_comparacion_cristalitas.savefig('resultados_DRX/comparacion_tamano_cristalita.png', dpi=300)
 # %%
 #%% Tabla resumen de tamaños de cristalita por Scherrer
 
@@ -2081,5 +2081,5 @@ df_cristalitas = pd.DataFrame({
 df_cristalitas.index.name = 'Muestra'
 display(df_cristalitas)
 
-df_cristalitas.to_csv('data_DRX/tabla_tamano_cristalita.csv', sep=';', decimal=',')
+df_cristalitas.to_csv('tabla_tamano_cristalita.csv', sep=';', decimal=',')
 # %%
